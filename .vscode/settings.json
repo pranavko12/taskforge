@@ -1,0 +1,8 @@
+{
+  "yaml.schemas": {
+    "./schemas/empty.schema.json": [
+      ".golangci.yml"
+    ]
+  },
+  "yaml.schemaStore.enable": false
+}
