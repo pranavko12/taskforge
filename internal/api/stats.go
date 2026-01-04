@@ -7,14 +7,19 @@ import (
 )
 
 type StatsPoint struct {
-	Ts     string `json:"ts"`
-	Total  int    `json:"total"`
-	Pending int   `json:"pending"`
-	DLQ    int    `json:"dlq"`
+	Ts      string `json:"ts"`
+	Total   int    `json:"total"`
+	Pending int    `json:"pending"`
+	Failed  int    `json:"failed"`
+	DLQ     int    `json:"dlq"`
 }
 
 type StatsResponse struct {
-	Points []StatsPoint `json:"points"`
+	Total   int         `json:"total"`
+	Pending int         `json:"pending"`
+	Failed  int         `json:"failed"`
+	DLQ     int         `json:"dlq"`
+	Points  []StatsPoint `json:"points"`
 }
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
@@ -28,24 +33,32 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 
 	var total int
 	var pending int
+	var failed int
 	var dlq int
 
 	err := s.db.QueryRow(ctx, `
 		SELECT
 			COUNT(1),
 			COUNT(1) FILTER (WHERE state = 'PENDING'),
+			COUNT(1) FILTER (WHERE state = 'FAILED'),
 			COUNT(1) FILTER (WHERE state = 'DLQ')
 		FROM jobs
-	`).Scan(&total, &pending, &dlq)
+	`).Scan(&total, &pending, &failed, &dlq)
 	if err != nil {
-		http.Error(w, "failed to load stats", http.StatusInternalServerError)
+		http.Error(w, "failed to load stats: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	writeJSON(w, http.StatusOK, StatsResponse{
+	resp := StatsResponse{
+		Total:   total,
+		Pending: pending,
+		Failed:  failed,
+		DLQ:     dlq,
 		Points: []StatsPoint{
-			{Ts: now, Total: total, Pending: pending, DLQ: dlq},
+			{Ts: now, Total: total, Pending: pending, Failed: failed, DLQ: dlq},
 		},
-	})
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }

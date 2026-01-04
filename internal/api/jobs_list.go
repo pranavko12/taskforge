@@ -9,9 +9,9 @@ import (
 )
 
 func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
+	qp := r.URL.Query()
 
-	limit := parseInt(q.Get("limit"), 50)
+	limit := parseInt(qp.Get("limit"), 50)
 	if limit <= 0 {
 		limit = 50
 	}
@@ -19,27 +19,27 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 		limit = 200
 	}
 
-	offset := parseInt(q.Get("offset"), 0)
+	offset := parseInt(qp.Get("offset"), 0)
 	if offset < 0 {
 		offset = 0
 	}
 
-	state := strings.TrimSpace(q.Get("state"))
-	jobType := strings.TrimSpace(q.Get("jobType"))
-	search := strings.TrimSpace(q.Get("q"))
+	state := strings.TrimSpace(qp.Get("state"))
+	jobType := strings.TrimSpace(qp.Get("jobType"))
+	search := strings.TrimSpace(qp.Get("q"))
 
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 
 	items, total, err := s.queryJobs(ctx, JobsQuery{
-		Limit:  limit,
+		Limit:   limit,
 		Offset: offset,
-		State:  state,
+		State:   state,
 		JobType: jobType,
-		Q:      search,
+		Q:       search,
 	})
 	if err != nil {
-		http.Error(w, "failed to list jobs", http.StatusInternalServerError)
+		http.Error(w, "failed to list jobs: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 

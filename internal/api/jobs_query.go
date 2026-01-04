@@ -2,9 +2,9 @@ package api
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 type JobsQuery struct {
@@ -21,41 +21,45 @@ type JobsListResponse struct {
 }
 
 func (s *Server) queryJobs(ctx context.Context, q JobsQuery) ([]JobStatusResponse, int, error) {
-	where := "WHERE 1=1"
-	args := make([]any, 0, 6)
-	argn := 1
+	whereParts := make([]string, 0, 4)
+	args := make([]any, 0, 8)
+
+	addArg := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
 
 	if q.State != "" {
-		where += " AND state = $" + itoa(argn)
-		args = append(args, q.State)
-		argn++
+		whereParts = append(whereParts, "state = "+addArg(q.State))
 	}
 	if q.JobType != "" {
-		where += " AND job_type = $" + itoa(argn)
-		args = append(args, q.JobType)
-		argn++
+		whereParts = append(whereParts, "job_type = "+addArg(q.JobType))
 	}
 	if q.Q != "" {
-		where += " AND (job_id ILIKE $" + itoa(argn) + " OR idempotency_key ILIKE $" + itoa(argn) + ")"
-		args = append(args, "%"+q.Q+"%")
-		argn++
+		p := addArg("%" + q.Q + "%")
+		whereParts = append(whereParts, "(job_id ILIKE "+p+" OR idempotency_key ILIKE "+p+")")
+	}
+
+	where := ""
+	if len(whereParts) > 0 {
+		where = " WHERE " + strings.Join(whereParts, " AND ")
 	}
 
 	var total int
-	countSQL := "SELECT COUNT(1) FROM jobs " + where
+	countSQL := "SELECT COUNT(1) FROM jobs" + where
 	if err := s.db.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	listSQL := `
-		SELECT job_id, job_type, state, retry_count, max_retries, COALESCE(last_error, ''),
-		       created_at, updated_at
-		FROM jobs
-	` + where + `
-		ORDER BY created_at DESC
-		LIMIT $` + itoa(argn) + ` OFFSET $` + itoa(argn+1)
+	limitPH := addArg(q.Limit)
+	offsetPH := addArg(q.Offset)
 
-	args = append(args, q.Limit, q.Offset)
+	listSQL := `
+SELECT job_id, job_type, state, retry_count, max_retries, COALESCE(last_error, ''),
+       created_at, updated_at
+FROM jobs` + where + `
+ORDER BY created_at DESC
+LIMIT ` + limitPH + ` OFFSET ` + offsetPH
 
 	rows, err := s.db.Query(ctx, listSQL, args...)
 	if err != nil {
@@ -85,7 +89,6 @@ func (s *Server) queryJobs(ctx context.Context, q JobsQuery) ([]JobStatusRespons
 
 		resp.CreatedAt = createdAt.UTC().Format(time.RFC3339)
 		resp.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
-
 		items = append(items, resp)
 	}
 
@@ -94,27 +97,4 @@ func (s *Server) queryJobs(ctx context.Context, q JobsQuery) ([]JobStatusRespons
 	}
 
 	return items, total, nil
-}
-
-func itoa(n int) string {
-	return pgx.Identifier{string(rune('a'))}.Sanitize() + ""[:0] + strconvItoa(n)
-}
-
-func strconvItoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	sign := ""
-	if n < 0 {
-		sign = "-"
-		n = -n
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return sign + string(b[i:])
 }
