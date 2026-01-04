@@ -34,7 +34,14 @@ func NewServer(db *pgxpool.Pool, rdb *redis.Client) *Server {
 
 	mux.HandleFunc("/health", s.health)
 	mux.HandleFunc("/jobs", s.jobs)
-	mux.HandleFunc("/jobs/", s.jobByID)
+	mux.HandleFunc("/jobs/", s.jobSubroutes)
+	mux.HandleFunc("/stats", s.stats)
+
+	uiDir := env("UI_DIR", "./ui")
+	mux.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(uiDir))))
+	mux.HandleFunc("/ui", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/", http.StatusMovedPermanently)
+	})
 
 	return s
 }
@@ -52,6 +59,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 
@@ -72,11 +80,20 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodPost:
+		s.submitJob(w, r)
+		return
+	case http.MethodGet:
+		s.listJobs(w, r)
+		return
+	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+}
 
+func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 	var req SubmitJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
@@ -90,6 +107,14 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing required fields", http.StatusBadRequest)
 		return
 	}
+
+	if req.JobType == WebhookDeliverJobType {
+		if err := validateWebhookDeliverPayload(req.Payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
 	if req.MaxRetries <= 0 {
 		req.MaxRetries = 5
 	}
@@ -161,7 +186,7 @@ func (s *Server) getJob(ctx context.Context, jobID string) (JobStatusResponse, e
 	var updatedAt time.Time
 
 	row := s.db.QueryRow(ctx, `
-		SELECT job_id, job_type, state, retry_count, max_retries, last_error, created_at, updated_at
+		SELECT job_id, job_type, state, retry_count, max_retries, COALESCE(last_error, ''), created_at, updated_at
 		FROM jobs
 		WHERE job_id = $1
 	`, jobID)

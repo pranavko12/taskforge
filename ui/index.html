@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>TaskForge Dashboard</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="top">
+        <div>
+          <div class="title">TaskForge</div>
+          <div class="sub">Jobs dashboard</div>
+        </div>
+
+        <div class="controls">
+          <select id="state">
+            <option value="">All states</option>
+            <option value="PENDING">PENDING</option>
+            <option value="RUNNING">RUNNING</option>
+            <option value="SUCCEEDED">SUCCEEDED</option>
+            <option value="FAILED">FAILED</option>
+            <option value="DLQ">DLQ</option>
+          </select>
+
+          <input id="jobType" placeholder="jobType (e.g. webhook.deliver)" />
+          <input id="q" placeholder="search jobId" />
+
+          <button id="refresh">Refresh</button>
+        </div>
+      </header>
+
+      <section class="grid">
+        <div class="card">
+          <div class="cardTitle">Throughput</div>
+          <canvas id="chart"></canvas>
+        </div>
+
+        <div class="card">
+          <div class="cardTitle">Summary</div>
+          <div class="kpis">
+            <div class="kpi">
+              <div class="k">Total</div>
+              <div class="v" id="kTotal">0</div>
+            </div>
+            <div class="kpi">
+              <div class="k">Pending</div>
+              <div class="v" id="kPending">0</div>
+            </div>
+            <div class="kpi">
+              <div class="k">Failed</div>
+              <div class="v" id="kFailed">0</div>
+            </div>
+            <div class="kpi">
+              <div class="k">DLQ</div>
+              <div class="v" id="kDLQ">0</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card tableCard">
+        <div class="tableHeader">
+          <div class="cardTitle">Jobs</div>
+          <div class="pager">
+            <button id="prev">Prev</button>
+            <div id="page">1</div>
+            <button id="next">Next</button>
+          </div>
+        </div>
+
+        <div class="tableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>jobId</th>
+                <th>jobType</th>
+                <th>state</th>
+                <th>retry</th>
+                <th>created</th>
+                <th>updated</th>
+                <th>actions</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>

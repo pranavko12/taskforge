@@ -23,3 +23,21 @@ type JobStatusResponse struct {
 	CreatedAt  string `json:"createdAt"`
 	UpdatedAt  string `json:"updatedAt"`
 }
+
+type JobListItem struct {
+	JobID      string `json:"jobId"`
+	JobType    string `json:"jobType"`
+	State      string `json:"state"`
+	RetryCount int    `json:"retryCount"`
+	MaxRetries int    `json:"maxRetries"`
+	LastError  string `json:"lastError"`
+	CreatedAt  string `json:"createdAt"`
+	UpdatedAt  string `json:"updatedAt"`
+}
+
+type JobListResponse struct {
+	Items  []JobListItem `json:"items"`
+	Total  int           `json:"total"`
+	Limit  int           `json:"limit"`
+	Offset int           `json:"offset"`
+}
