@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -32,16 +33,18 @@ func NewServer(db *pgxpool.Pool, rdb *redis.Client) *Server {
 	}
 
 	mux.HandleFunc("/health", s.health)
+
 	mux.HandleFunc("/jobs", s.jobs)
-	mux.HandleFunc("/jobs/", s.jobSubroutes)
+	mux.HandleFunc("/jobs/", s.jobsSubroutes)
+
+	// Implemented in stats.go
 	mux.HandleFunc("/stats", s.stats)
 
-	h, err := uiHandler()
-	if err == nil {
+	// Prefer embedded UI if available; fallback to disk.
+	if h, err := uiHandler(); err == nil {
 		mux.Handle("/ui/", http.StripPrefix("/ui/", h))
-		mux.HandleFunc("/ui", func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "/ui/", http.StatusMovedPermanently)
-		})
+	} else {
+		mux.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(env("UI_DIR", "./internal/api/ui")))))
 	}
 
 	return s
@@ -73,19 +76,71 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }
 
 func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		s.submitJob(w, r)
+		return
 	case http.MethodGet:
+		// Implemented in jobs_list.go
 		s.listJobs(w, r)
+		return
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
+}
+
+func (s *Server) jobsSubroutes(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/jobs/")
+	path = strings.Trim(path, "/")
+	if path == "" {
+		http.Error(w, "missing job id", http.StatusBadRequest)
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	id := strings.TrimSpace(parts[0])
+	if id == "" {
+		http.Error(w, "missing job id", http.StatusBadRequest)
+		return
+	}
+
+	if len(parts) == 1 {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		s.getJobByID(w, r, id)
+		return
+	}
+
+	if len(parts) == 2 {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		switch parts[1] {
+		case "retry":
+			// Implemented in jobs_route.go
+			s.retryJob(w, r, id)
+			return
+		case "dlq":
+			// Implemented in jobs_route.go
+			s.dlqJob(w, r, id)
+			return
+		default:
+			http.Error(w, "unknown action", http.StatusNotFound)
+			return
+		}
+	}
+
+	http.Error(w, "not found", http.StatusNotFound)
 }
 
 func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
@@ -102,11 +157,11 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing required fields", http.StatusBadRequest)
 		return
 	}
-
 	if req.MaxRetries <= 0 {
 		req.MaxRetries = 5
 	}
 
+	// Make webhook jobs safe-by-default.
 	if req.JobType == WebhookDeliverJobType {
 		if err := validateWebhookDeliverPayload(req.Payload); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -128,8 +183,8 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	queue := env("QUEUE_NAME", "jobs:ready")
-	if err := s.rdb.LPush(ctx, queue, jobID).Err(); err != nil {
+	queueName := env("QUEUE_NAME", "jobs:ready")
+	if err := s.rdb.LPush(ctx, queueName, jobID).Err(); err != nil {
 		http.Error(w, "failed to enqueue job", http.StatusInternalServerError)
 		return
 	}
@@ -137,14 +192,30 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, SubmitJobResponse{JobID: jobID})
 }
 
+func (s *Server) getJobByID(w http.ResponseWriter, r *http.Request, id string) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	resp, err := s.getJob(ctx, id)
+	if err != nil {
+		if errors.Is(err, errNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func isUniqueViolation(err error) bool {
 	msg := err.Error()
-	return strings.Contains(msg, "duplicate key value") ||
-		strings.Contains(msg, "jobs_idempotency_key_uq")
+	return strings.Contains(msg, "duplicate key value") || strings.Contains(msg, "jobs_idempotency_key_uq")
 }
