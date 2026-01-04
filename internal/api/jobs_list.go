@@ -10,9 +10,6 @@ import (
 
 func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	state := strings.TrimSpace(q.Get("state"))
-	jobType := strings.TrimSpace(q.Get("jobType"))
-	search := strings.TrimSpace(q.Get("q"))
 
 	limit := parseInt(q.Get("limit"), 50)
 	if limit <= 0 {
@@ -27,30 +24,39 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	state := strings.TrimSpace(q.Get("state"))
+	jobType := strings.TrimSpace(q.Get("jobType"))
+	search := strings.TrimSpace(q.Get("q"))
+
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 
-	items, total, err := s.queryJobs(ctx, state, jobType, search, limit, offset)
+	items, total, err := s.queryJobs(ctx, JobsQuery{
+		Limit:  limit,
+		Offset: offset,
+		State:  state,
+		JobType: jobType,
+		Q:      search,
+	})
 	if err != nil {
 		http.Error(w, "failed to list jobs", http.StatusInternalServerError)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, JobListResponse{
-		Items:  items,
-		Total:  total,
-		Limit:  limit,
-		Offset: offset,
+	writeJSON(w, http.StatusOK, JobsListResponse{
+		Items: items,
+		Total: total,
 	})
 }
 
-func parseInt(v string, def int) int {
+func parseInt(v string, fallback int) int {
+	v = strings.TrimSpace(v)
 	if v == "" {
-		return def
+		return fallback
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
-		return def
+		return fallback
 	}
 	return n
 }

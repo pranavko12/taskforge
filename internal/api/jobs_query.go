@@ -3,75 +3,118 @@ package api
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
-func (s *Server) queryJobs(ctx context.Context, state, jobType, search string, limit, offset int) ([]JobListItem, int, error) {
-	where := `WHERE 1=1`
-	args := []any{}
-	i := 1
+type JobsQuery struct {
+	Limit   int
+	Offset  int
+	State   string
+	JobType string
+	Q       string
+}
 
-	if state != "" {
-		where += ` AND state = $` + itoa(i)
-		args = append(args, state)
-		i++
+type JobsListResponse struct {
+	Items []JobStatusResponse `json:"items"`
+	Total int                 `json:"total"`
+}
+
+func (s *Server) queryJobs(ctx context.Context, q JobsQuery) ([]JobStatusResponse, int, error) {
+	where := "WHERE 1=1"
+	args := make([]any, 0, 6)
+	argn := 1
+
+	if q.State != "" {
+		where += " AND state = $" + itoa(argn)
+		args = append(args, q.State)
+		argn++
 	}
-	if jobType != "" {
-		where += ` AND job_type = $` + itoa(i)
-		args = append(args, jobType)
-		i++
+	if q.JobType != "" {
+		where += " AND job_type = $" + itoa(argn)
+		args = append(args, q.JobType)
+		argn++
 	}
-	if search != "" {
-		where += ` AND job_id ILIKE '%' || $` + itoa(i) + ` || '%'`
-		args = append(args, search)
-		i++
+	if q.Q != "" {
+		where += " AND (job_id ILIKE $" + itoa(argn) + " OR idempotency_key ILIKE $" + itoa(argn) + ")"
+		args = append(args, "%"+q.Q+"%")
+		argn++
 	}
 
 	var total int
-	row := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM jobs `+where, args...)
-	if err := row.Scan(&total); err != nil {
+	countSQL := "SELECT COUNT(1) FROM jobs " + where
+	if err := s.db.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	rows, err := s.db.Query(ctx, `
-		SELECT job_id, job_type, state, retry_count, max_retries, COALESCE(last_error, ''), created_at, updated_at
+	listSQL := `
+		SELECT job_id, job_type, state, retry_count, max_retries, COALESCE(last_error, ''),
+		       created_at, updated_at
 		FROM jobs
-	`+where+`
+	` + where + `
 		ORDER BY created_at DESC
-		LIMIT $`+itoa(i)+` OFFSET $`+itoa(i+1), append(args, limit, offset)...)
+		LIMIT $` + itoa(argn) + ` OFFSET $` + itoa(argn+1)
+
+	args = append(args, q.Limit, q.Offset)
+
+	rows, err := s.db.Query(ctx, listSQL, args...)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
 
-	out := make([]JobListItem, 0, limit)
+	items := make([]JobStatusResponse, 0, q.Limit)
+
 	for rows.Next() {
-		var it JobListItem
+		var resp JobStatusResponse
 		var createdAt time.Time
 		var updatedAt time.Time
-		if err := rows.Scan(&it.JobID, &it.JobType, &it.State, &it.RetryCount, &it.MaxRetries, &it.LastError, &createdAt, &updatedAt); err != nil {
+
+		if err := rows.Scan(
+			&resp.JobID,
+			&resp.JobType,
+			&resp.State,
+			&resp.RetryCount,
+			&resp.MaxRetries,
+			&resp.LastError,
+			&createdAt,
+			&updatedAt,
+		); err != nil {
 			return nil, 0, err
 		}
-		it.CreatedAt = createdAt.UTC().Format(time.RFC3339)
-		it.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
-		out = append(out, it)
+
+		resp.CreatedAt = createdAt.UTC().Format(time.RFC3339)
+		resp.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
+
+		items = append(items, resp)
 	}
+
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
 	}
 
-	return out, total, nil
+	return items, total, nil
 }
 
 func itoa(n int) string {
-	buf := [20]byte{}
-	i := len(buf)
-	for {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-		if n == 0 {
-			break
-		}
+	return pgx.Identifier{string(rune('a'))}.Sanitize() + ""[:0] + strconvItoa(n)
+}
+
+func strconvItoa(n int) string {
+	if n == 0 {
+		return "0"
 	}
-	return string(buf[i:])
+	sign := ""
+	if n < 0 {
+		sign = "-"
+		n = -n
+	}
+	var b [20]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return sign + string(b[i:])
 }

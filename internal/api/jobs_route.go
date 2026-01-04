@@ -9,36 +9,45 @@ import (
 
 func (s *Server) jobSubroutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/jobs/")
-	path = strings.TrimSpace(path)
-	if path == "" {
-		http.Error(w, "missing job id", http.StatusBadRequest)
-		return
-	}
-
 	parts := strings.Split(path, "/")
-	id := strings.TrimSpace(parts[0])
-	if id == "" {
+	jobID := parts[0]
+
+	if jobID == "" {
 		http.Error(w, "missing job id", http.StatusBadRequest)
 		return
 	}
 
 	if len(parts) == 1 {
-		s.jobByID(w, r)
+		s.jobByID(w, r, jobID)
 		return
 	}
 
-	action := strings.TrimSpace(parts[1])
-	switch action {
+	switch parts[1] {
 	case "retry":
-		s.retryJob(w, r, id)
-		return
+		s.retryJob(w, r, jobID)
 	case "dlq":
-		s.dlqJob(w, r, id)
-		return
+		s.dlqJob(w, r, jobID)
 	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *Server) jobByID(w http.ResponseWriter, r *http.Request, jobID string) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	job, err := s.getJob(ctx, jobID)
+	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+
+	writeJSON(w, http.StatusOK, job)
 }
 
 func (s *Server) retryJob(w http.ResponseWriter, r *http.Request, jobID string) {
@@ -50,21 +59,14 @@ func (s *Server) retryJob(w http.ResponseWriter, r *http.Request, jobID string) 
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
-	_, err := s.db.Exec(ctx, `
+	s.db.Exec(ctx, `
 		UPDATE jobs
 		SET state = 'PENDING', last_error = '', updated_at = NOW()
 		WHERE job_id = $1
 	`, jobID)
-	if err != nil {
-		http.Error(w, "failed to retry", http.StatusInternalServerError)
-		return
-	}
 
-	queueName := env("QUEUE_NAME", "jobs:ready")
-	if err := s.rdb.LPush(ctx, queueName, jobID).Err(); err != nil {
-		http.Error(w, "failed to enqueue job", http.StatusInternalServerError)
-		return
-	}
+	queue := env("QUEUE_NAME", "jobs:ready")
+	s.rdb.LPush(ctx, queue, jobID)
 
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -78,15 +80,11 @@ func (s *Server) dlqJob(w http.ResponseWriter, r *http.Request, jobID string) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
-	_, err := s.db.Exec(ctx, `
+	s.db.Exec(ctx, `
 		UPDATE jobs
 		SET state = 'DLQ', updated_at = NOW()
 		WHERE job_id = $1
 	`, jobID)
-	if err != nil {
-		http.Error(w, "failed to move to dlq", http.StatusInternalServerError)
-		return
-	}
 
 	w.WriteHeader(http.StatusAccepted)
 }

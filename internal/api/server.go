@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -26,7 +25,7 @@ func NewServer(db *pgxpool.Pool, rdb *redis.Client) *Server {
 		db:  db,
 		rdb: rdb,
 		http: &http.Server{
-			Addr:              ":8080",
+			Addr:              env("HTTP_ADDR", ":8080"),
 			Handler:           mux,
 			ReadHeaderTimeout: 5 * time.Second,
 		},
@@ -108,6 +107,13 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 		req.MaxRetries = 5
 	}
 
+	if req.JobType == WebhookDeliverJobType {
+		if err := validateWebhookDeliverPayload(req.Payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
 	jobID := uuid.New().String()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
@@ -122,93 +128,13 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.rdb.LPush(ctx, "jobs:ready", jobID).Err(); err != nil {
+	queue := env("QUEUE_NAME", "jobs:ready")
+	if err := s.rdb.LPush(ctx, queue, jobID).Err(); err != nil {
 		http.Error(w, "failed to enqueue job", http.StatusInternalServerError)
 		return
 	}
 
 	writeJSON(w, http.StatusAccepted, SubmitJobResponse{JobID: jobID})
-}
-
-func (s *Server) jobSubroutes(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/jobs/")
-	parts := strings.Split(path, "/")
-	id := parts[0]
-
-	if id == "" {
-		http.Error(w, "missing job id", http.StatusBadRequest)
-		return
-	}
-
-	if len(parts) == 1 {
-		s.jobByID(w, r)
-		return
-	}
-
-	switch parts[1] {
-	case "retry":
-		s.retryJob(w, r, id)
-	case "dlq":
-		s.dlqJob(w, r, id)
-	default:
-		http.Error(w, "not found", http.StatusNotFound)
-	}
-}
-
-func (s *Server) jobByID(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	id := strings.TrimPrefix(r.URL.Path, "/jobs/")
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-
-	resp, err := s.getJob(ctx, id)
-	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (s *Server) retryJob(w http.ResponseWriter, r *http.Request, jobID string) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-
-	s.db.Exec(ctx, `
-		UPDATE jobs
-		SET state = 'PENDING', last_error = '', updated_at = NOW()
-		WHERE job_id = $1
-	`, jobID)
-
-	s.rdb.LPush(ctx, "jobs:ready", jobID)
-	w.WriteHeader(http.StatusAccepted)
-}
-
-func (s *Server) dlqJob(w http.ResponseWriter, r *http.Request, jobID string) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-
-	s.db.Exec(ctx, `
-		UPDATE jobs
-		SET state = 'DLQ', updated_at = NOW()
-		WHERE job_id = $1
-	`, jobID)
-
-	w.WriteHeader(http.StatusAccepted)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -219,7 +145,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func isUniqueViolation(err error) bool {
 	msg := err.Error()
-	return strings.Contains(msg, "duplicate")
+	return strings.Contains(msg, "duplicate key value") ||
+		strings.Contains(msg, "jobs_idempotency_key_uq")
 }
-
-var errNotFound = errors.New("not found")
