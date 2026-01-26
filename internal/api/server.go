@@ -4,14 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	redis "github.com/redis/go-redis/v9"
 )
+
+const maxJSONBody = 1 << 20 // 1 MiB
 
 type Server struct {
 	db   *pgxpool.Pool
@@ -29,6 +33,9 @@ func NewServer(db *pgxpool.Pool, rdb *redis.Client) *Server {
 			Addr:              env("HTTP_ADDR", ":8080"),
 			Handler:           mux,
 			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       10 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       60 * time.Second,
 		},
 	}
 
@@ -145,7 +152,7 @@ func (s *Server) jobsSubroutes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 	var req SubmitJobRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
@@ -216,6 +223,23 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
 	msg := err.Error()
 	return strings.Contains(msg, "duplicate key value") || strings.Contains(msg, "jobs_idempotency_key_uq")
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("extra data")
+	}
+	return nil
 }

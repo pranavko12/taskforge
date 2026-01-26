@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 var errNotFound = errors.New("not found")
@@ -38,7 +40,10 @@ func (s *Server) getJob(ctx context.Context, jobID string) (JobStatusResponse, e
 		&createdAt,
 		&updatedAt,
 	); err != nil {
-		return JobStatusResponse{}, errNotFound
+		if errors.Is(err, pgx.ErrNoRows) {
+			return JobStatusResponse{}, errNotFound
+		}
+		return JobStatusResponse{}, err
 	}
 
 	resp.CreatedAt = createdAt.UTC().Format(time.RFC3339)
