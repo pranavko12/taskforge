@@ -2,10 +2,9 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 var errNotFound = errors.New("not found")
@@ -40,7 +39,7 @@ func (s *Server) getJob(ctx context.Context, jobID string) (JobStatusResponse, e
 		&createdAt,
 		&updatedAt,
 	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return JobStatusResponse{}, errNotFound
 		}
 		return JobStatusResponse{}, err
