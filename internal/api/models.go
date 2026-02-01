@@ -31,7 +31,7 @@ type JobStatusResponse struct {
 	UpdatedAt   time.Time  `json:"updatedAt"`
 }
 
-type JobListResponse struct {
+type JobsListResponse struct {
 	Items  []JobStatusResponse `json:"items"`
 	Total  int                 `json:"total"`
 	Limit  int                 `json:"limit"`
