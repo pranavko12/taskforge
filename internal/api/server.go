@@ -9,29 +9,39 @@ import (
 	"strings"
 	"time"
 
+	"log/slog"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
-	redis "github.com/redis/go-redis/v9"
+
+	"github.com/pranavko12/taskforge/internal/config"
 )
 
 const maxJSONBody = 1 << 20 // 1 MiB
 
 type Server struct {
-	db   *pgxpool.Pool
-	rdb  *redis.Client
-	http *http.Server
+	store     Store
+	queue     Queue
+	deps      DependencyChecker
+	logger    *slog.Logger
+	queueName string
+	uiDir     string
+	http      *http.Server
+	handler   http.Handler
 }
 
-func NewServer(db *pgxpool.Pool, rdb *redis.Client) *Server {
+func NewServer(cfg config.Config, store Store, queue Queue, deps DependencyChecker, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
 
 	s := &Server{
-		db:  db,
-		rdb: rdb,
+		store:     store,
+		queue:     queue,
+		deps:      deps,
+		logger:    logger,
+		queueName: cfg.QueueName,
+		uiDir:     cfg.UIDir,
 		http: &http.Server{
-			Addr:              env("HTTP_ADDR", ":8080"),
-			Handler:           mux,
+			Addr:              cfg.HTTPAddr,
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       10 * time.Second,
 			WriteTimeout:      10 * time.Second,
@@ -39,7 +49,16 @@ func NewServer(db *pgxpool.Pool, rdb *redis.Client) *Server {
 		},
 	}
 
-	mux.HandleFunc("/health", s.health)
+	if s.logger == nil {
+		s.logger = slog.Default()
+	}
+	if s.deps == nil {
+		s.deps = NewDependencyChecker(s.store, s.queue)
+	}
+
+	mux.HandleFunc("/healthz", s.healthz)
+	mux.HandleFunc("/readyz", s.readyz)
+	mux.HandleFunc("/health", s.readyz)
 
 	mux.HandleFunc("/jobs", s.jobs)
 	mux.HandleFunc("/jobs/", s.jobsSubroutes)
@@ -51,8 +70,11 @@ func NewServer(db *pgxpool.Pool, rdb *redis.Client) *Server {
 	if h, err := uiHandler(); err == nil {
 		mux.Handle("/ui/", http.StripPrefix("/ui/", h))
 	} else {
-		mux.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(env("UI_DIR", "./internal/api/ui")))))
+		mux.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(s.uiDir))))
 	}
+
+	s.handler = requestIDMiddleware(loggingMiddleware(s.logger, mux))
+	s.http.Handler = s.handler
 
 	return s
 }
@@ -65,21 +87,32 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.http.Shutdown(ctx)
 }
 
-func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+func (s *Server) Handler() http.Handler {
+	return s.handler
+}
+
+func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "invalid_method", "method not allowed", nil)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
+func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, "invalid_method", "method not allowed", nil)
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 
-	if err := s.db.Ping(ctx); err != nil {
-		http.Error(w, "postgres not ready", http.StatusServiceUnavailable)
-		return
-	}
-	if err := s.rdb.Ping(ctx).Err(); err != nil {
-		http.Error(w, "redis not ready", http.StatusServiceUnavailable)
+	if err := s.deps.Check(ctx); err != nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "dependency_not_ready", err.Error(), nil)
 		return
 	}
 
@@ -98,7 +131,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		s.listJobs(w, r)
 		return
 	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "invalid_method", "method not allowed", nil)
 		return
 	}
 }
@@ -107,20 +140,20 @@ func (s *Server) jobsSubroutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/jobs/")
 	path = strings.Trim(path, "/")
 	if path == "" {
-		http.Error(w, "missing job id", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "missing_job_id", "missing job id", nil)
 		return
 	}
 
 	parts := strings.Split(path, "/")
 	id := strings.TrimSpace(parts[0])
 	if id == "" {
-		http.Error(w, "missing job id", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "missing_job_id", "missing job id", nil)
 		return
 	}
 
 	if len(parts) == 1 {
 		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+			writeAPIError(w, http.StatusMethodNotAllowed, "invalid_method", "method not allowed", nil)
 			return
 		}
 		s.getJobByID(w, r, id)
@@ -129,7 +162,7 @@ func (s *Server) jobsSubroutes(w http.ResponseWriter, r *http.Request) {
 
 	if len(parts) == 2 {
 		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+			writeAPIError(w, http.StatusMethodNotAllowed, "invalid_method", "method not allowed", nil)
 			return
 		}
 		switch parts[1] {
@@ -142,18 +175,18 @@ func (s *Server) jobsSubroutes(w http.ResponseWriter, r *http.Request) {
 			s.dlqJob(w, r, id)
 			return
 		default:
-			http.Error(w, "unknown action", http.StatusNotFound)
+			writeAPIError(w, http.StatusNotFound, "not_found", "unknown action", nil)
 			return
 		}
 	}
 
-	http.Error(w, "not found", http.StatusNotFound)
+	writeAPIError(w, http.StatusNotFound, "not_found", "not found", nil)
 }
 
 func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 	var req SubmitJobRequest
 	if err := decodeJSON(w, r, &req); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid json", err.Error())
 		return
 	}
 
@@ -161,7 +194,7 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 	req.IdempotencyKey = strings.TrimSpace(req.IdempotencyKey)
 
 	if req.JobType == "" || len(req.Payload) == 0 || req.IdempotencyKey == "" {
-		http.Error(w, "missing required fields", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "missing_required_fields", "missing required fields", nil)
 		return
 	}
 	if req.MaxRetries <= 0 {
@@ -171,7 +204,7 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 	// Make webhook jobs safe-by-default.
 	if req.JobType == WebhookDeliverJobType {
 		if err := validateWebhookDeliverPayload(req.Payload); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeAPIError(w, http.StatusBadRequest, "invalid_payload", err.Error(), nil)
 			return
 		}
 	}
@@ -181,18 +214,17 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
-	if err := s.insertJob(ctx, jobID, req); err != nil {
+	if err := s.store.InsertJob(ctx, jobID, req); err != nil {
 		if isUniqueViolation(err) {
-			http.Error(w, "duplicate idempotencyKey", http.StatusConflict)
+			writeAPIError(w, http.StatusConflict, "idempotency_conflict", "duplicate idempotencyKey", nil)
 			return
 		}
-		http.Error(w, "failed to persist job", http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to persist job", nil)
 		return
 	}
 
-	queueName := env("QUEUE_NAME", "jobs:ready")
-	if err := s.rdb.LPush(ctx, queueName, jobID).Err(); err != nil {
-		http.Error(w, "failed to enqueue job", http.StatusInternalServerError)
+	if err := s.queue.Enqueue(ctx, s.queueName, jobID); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to enqueue job", nil)
 		return
 	}
 
@@ -203,13 +235,13 @@ func (s *Server) getJobByID(w http.ResponseWriter, r *http.Request, id string) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
-	resp, err := s.getJob(ctx, id)
+	resp, err := s.store.GetJob(ctx, id)
 	if err != nil {
 		if errors.Is(err, errNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeAPIError(w, http.StatusNotFound, "not_found", "not found", nil)
 			return
 		}
-		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to fetch job", nil)
 		return
 	}
 

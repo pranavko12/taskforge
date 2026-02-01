@@ -19,44 +19,32 @@ type StatsResponse struct {
 	Pending int         `json:"pending"`
 	Failed  int         `json:"failed"`
 	DLQ     int         `json:"dlq"`
-	Points  []StatsPoint `json:"points"`
+	Points []StatsPoint `json:"points"`
 }
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "invalid_method", "method not allowed", nil)
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 
-	var total int
-	var pending int
-	var failed int
-	var dlq int
-
-	err := s.db.QueryRow(ctx, `
-		SELECT
-			COUNT(1),
-			COUNT(1) FILTER (WHERE state = 'PENDING'),
-			COUNT(1) FILTER (WHERE state = 'FAILED'),
-			COUNT(1) FILTER (WHERE state = 'DLQ')
-		FROM jobs
-	`).Scan(&total, &pending, &failed, &dlq)
+	counts, err := s.store.Stats(ctx)
 	if err != nil {
-		http.Error(w, "failed to load stats: "+err.Error(), http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to load stats", nil)
 		return
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	resp := StatsResponse{
-		Total:   total,
-		Pending: pending,
-		Failed:  failed,
-		DLQ:     dlq,
+		Total:   counts.Total,
+		Pending: counts.Pending,
+		Failed:  counts.Failed,
+		DLQ:     counts.DLQ,
 		Points: []StatsPoint{
-			{Ts: now, Total: total, Pending: pending, Failed: failed, DLQ: dlq},
+			{Ts: now, Total: counts.Total, Pending: counts.Pending, Failed: counts.Failed, DLQ: counts.DLQ},
 		},
 	}
 

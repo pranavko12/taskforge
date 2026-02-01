@@ -6,6 +6,38 @@ This project is built to demonstrate real-world backend system design principles
 
 ---
 
+## API Endpoints
+
+- GET `/healthz` (liveness; always 200 if process is up)
+- GET `/readyz` (readiness; checks Postgres + Redis)
+- GET `/stats`
+- GET `/jobs`
+- POST `/jobs`
+- GET `/jobs/{id}`
+- POST `/jobs/{id}/retry`
+- POST `/jobs/{id}/dlq`
+
+All error responses use a consistent JSON shape: `{ "code": "...", "message": "...", "details": ... }`.
+Each response includes an `X-Request-ID` header for tracing.
+
+---
+
+## Configuration
+
+Required:
+- `POSTGRES_DSN`
+
+Common:
+- `HTTP_ADDR` (default `:8080`)
+- `QUEUE_NAME` (default `jobs:ready`)
+- `REDIS_ADDR` (default `localhost:6379`)
+- `REDIS_DB` (default `0`)
+- `REDIS_PASSWORD` (default empty)
+- `LOG_LEVEL` (debug|info|warn|error, default `info`)
+- `UI_DIR` (default `./internal/api/ui`)
+
+---
+
 ## Architecture Overview
 
 TaskForge is composed of the following core components:

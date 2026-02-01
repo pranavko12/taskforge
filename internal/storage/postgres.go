@@ -2,27 +2,26 @@ package storage
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pranavko12/taskforge/internal/config"
 )
 
 type Postgres struct {
 	Pool *pgxpool.Pool
 }
 
-func NewPostgres(ctx context.Context) (*Postgres, error) {
-	dsn := os.Getenv("POSTGRES_DSN")
-	cfg, err := pgxpool.ParseConfig(dsn)
+func NewPostgres(ctx context.Context, cfg config.Config) (*Postgres, error) {
+	pgCfg, err := pgxpool.ParseConfig(cfg.PostgresDSN)
 	if err != nil {
 		return nil, err
 	}
-	cfg.MaxConns = 10
-	cfg.MinConns = 2
-	cfg.MaxConnLifetime = 30 * time.Minute
+	pgCfg.MaxConns = 10
+	pgCfg.MinConns = 2
+	pgCfg.MaxConnLifetime = 30 * time.Minute
 
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	pool, err := pgxpool.NewWithConfig(ctx, pgCfg)
 	if err != nil {
 		return nil, err
 	}
