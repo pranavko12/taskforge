@@ -11,6 +11,7 @@ import (
 )
 
 var errNotFound = errors.New("not found")
+var errInvalidTransition = errors.New("invalid state transition")
 
 type PostgresStore struct {
 	pool *pgxpool.Pool
@@ -158,11 +159,21 @@ func (s *PostgresStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatus
 }
 
 func (s *PostgresStore) RetryJob(ctx context.Context, jobID string) (bool, error) {
+	var state string
+	if err := s.pool.QueryRow(ctx, `SELECT state FROM jobs WHERE job_id = $1`, jobID).Scan(&state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, errNotFound
+		}
+		return false, err
+	}
+	if state != StateFailed && state != StateRetrying && state != StateDLQ && state != StateDead {
+		return false, errInvalidTransition
+	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE jobs
-		SET state = 'PENDING', last_error = '', updated_at = NOW()
-		WHERE job_id = $1
-	`, jobID)
+		SET state = $1, last_error = '', updated_at = NOW()
+		WHERE job_id = $2
+	`, StatePending, jobID)
 	if err != nil {
 		return false, err
 	}
@@ -170,11 +181,21 @@ func (s *PostgresStore) RetryJob(ctx context.Context, jobID string) (bool, error
 }
 
 func (s *PostgresStore) DLQJob(ctx context.Context, jobID string) (bool, error) {
+	var state string
+	if err := s.pool.QueryRow(ctx, `SELECT state FROM jobs WHERE job_id = $1`, jobID).Scan(&state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, errNotFound
+		}
+		return false, err
+	}
+	if state != StateFailed && state != StateRetrying && state != StateInProgress {
+		return false, errInvalidTransition
+	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE jobs
-		SET state = 'DLQ', updated_at = NOW()
-		WHERE job_id = $1
-	`, jobID)
+		SET state = $1, updated_at = NOW()
+		WHERE job_id = $2
+	`, StateDLQ, jobID)
 	if err != nil {
 		return false, err
 	}

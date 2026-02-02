@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 )
@@ -17,6 +18,10 @@ func (s *Server) retryJob(w http.ResponseWriter, r *http.Request, jobID string) 
 
 	ok, err := s.store.RetryJob(ctx, jobID)
 	if err != nil {
+		if errors.Is(err, errInvalidTransition) {
+			writeAPIError(w, http.StatusConflict, "invalid_state_transition", "invalid state transition", nil)
+			return
+		}
 		writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to retry job", nil)
 		return
 	}
@@ -44,6 +49,10 @@ func (s *Server) dlqJob(w http.ResponseWriter, r *http.Request, jobID string) {
 
 	ok, err := s.store.DLQJob(ctx, jobID)
 	if err != nil {
+		if errors.Is(err, errInvalidTransition) {
+			writeAPIError(w, http.StatusConflict, "invalid_state_transition", "invalid state transition", nil)
+			return
+		}
 		writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to dlq job", nil)
 		return
 	}
