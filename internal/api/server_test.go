@@ -69,6 +69,31 @@ func TestErrorShapeInvalidJSON(t *testing.T) {
 	assertAPIError(t, rec, http.StatusBadRequest, "invalid_json")
 }
 
+func TestIdempotencyReturnsExistingJob(t *testing.T) {
+	store := fakeStore{
+		insertErr:     errUnique,
+		getByKeyResp:  JobStatusResponse{JobID: "existing"},
+	}
+	s := newTestServer(store, fakeQueue{})
+
+	body := `{"jobType":"demo","payload":{"a":1},"idempotencyKey":"abc"}`
+	req := httptest.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp SubmitJobResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.JobID != "existing" {
+		t.Fatalf("expected existing job id, got %q", resp.JobID)
+	}
+}
+
 func TestJobsListOK(t *testing.T) {
 	store := fakeStore{
 		queryJobsResp: []JobStatusResponse{{JobID: "job-1", JobType: "demo"}},
@@ -139,12 +164,15 @@ func assertAPIError(t *testing.T, rec *httptest.ResponseRecorder, status int, co
 }
 
 var errTest = errors.New("test error")
+var errUnique = errors.New("duplicate key value violates unique constraint")
 
 type fakeStore struct {
 	pingErr       error
 	insertErr     error
 	getJobResp    JobStatusResponse
 	getJobErr     error
+	getByKeyResp  JobStatusResponse
+	getByKeyErr   error
 	queryJobsResp []JobStatusResponse
 	queryJobsTotal int
 	queryJobsErr  error
@@ -169,6 +197,13 @@ func (f fakeStore) GetJob(ctx context.Context, jobID string) (JobStatusResponse,
 		return JobStatusResponse{}, f.getJobErr
 	}
 	return f.getJobResp, nil
+}
+
+func (f fakeStore) GetJobByIdempotencyKey(ctx context.Context, key string) (JobStatusResponse, error) {
+	if f.getByKeyErr != nil {
+		return JobStatusResponse{}, f.getByKeyErr
+	}
+	return f.getByKeyResp, nil
 }
 
 func (f fakeStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatusResponse, int, error) {

@@ -13,6 +13,7 @@ This project is built to demonstrate real-world backend system design principles
 - GET `/stats`
 - GET `/jobs`
 - POST `/jobs`
+- POST `/jobs` with an existing `idempotencyKey` returns the existing job id
 - GET `/jobs/{id}`
 - POST `/jobs/{id}/retry`
 - POST `/jobs/{id}/dlq`

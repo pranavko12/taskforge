@@ -217,7 +217,12 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.store.InsertJob(ctx, jobID, req); err != nil {
 		if isUniqueViolation(err) {
-			writeAPIError(w, http.StatusConflict, "idempotency_conflict", "duplicate idempotencyKey", nil)
+			existing, getErr := s.store.GetJobByIdempotencyKey(ctx, req.IdempotencyKey)
+			if getErr != nil {
+				writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to load existing job", nil)
+				return
+			}
+			writeJSON(w, http.StatusOK, SubmitJobResponse{JobID: existing.JobID})
 			return
 		}
 		writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to persist job", nil)

@@ -74,6 +74,46 @@ func (s *PostgresStore) GetJob(ctx context.Context, jobID string) (JobStatusResp
 	return resp, nil
 }
 
+func (s *PostgresStore) GetJobByIdempotencyKey(ctx context.Context, key string) (JobStatusResponse, error) {
+	var resp JobStatusResponse
+	err := s.pool.QueryRow(ctx, `
+		SELECT job_id, job_type, state, retry_count, max_retries, max_attempts, attempt_count,
+			initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at,
+			COALESCE(last_error, ''), scheduled_at, available_at, started_at, completed_at, created_at, updated_at
+		FROM jobs
+		WHERE idempotency_key = $1
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, key).Scan(
+		&resp.JobID,
+		&resp.JobType,
+		&resp.State,
+		&resp.RetryCount,
+		&resp.MaxRetries,
+		&resp.MaxAttempts,
+		&resp.AttemptCount,
+		&resp.InitialDelayMs,
+		&resp.BackoffMultiplier,
+		&resp.MaxDelayMs,
+		&resp.Jitter,
+		&resp.NextRunAt,
+		&resp.LastError,
+		&resp.ScheduledAt,
+		&resp.AvailableAt,
+		&resp.StartedAt,
+		&resp.CompletedAt,
+		&resp.CreatedAt,
+		&resp.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return JobStatusResponse{}, errNotFound
+		}
+		return JobStatusResponse{}, err
+	}
+	return resp, nil
+}
+
 func (s *PostgresStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatusResponse, int, error) {
 	whereParts := []string{"1=1"}
 	args := []any{}
