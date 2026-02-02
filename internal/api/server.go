@@ -197,8 +197,9 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "missing_required_fields", "missing required fields", nil)
 		return
 	}
-	if req.MaxRetries <= 0 {
-		req.MaxRetries = 5
+	if err := applyRetryPolicyDefaults(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_retry_policy", err.Error(), nil)
+		return
 	}
 
 	// Make webhook jobs safe-by-default.
@@ -272,6 +273,48 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	}
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return errors.New("extra data")
+	}
+	return nil
+}
+
+func applyRetryPolicyDefaults(req *SubmitJobRequest) error {
+	if req.MaxAttempts <= 0 {
+		if req.MaxRetries > 0 {
+			req.MaxAttempts = req.MaxRetries + 1
+		} else {
+			req.MaxAttempts = 5
+		}
+	}
+	if req.MaxAttempts < 1 {
+		return errors.New("maxAttempts must be >= 1")
+	}
+	if req.MaxRetries <= 0 {
+		if req.MaxAttempts > 0 {
+			req.MaxRetries = req.MaxAttempts - 1
+		} else {
+			req.MaxRetries = 4
+		}
+	}
+	if req.InitialDelayMs <= 0 {
+		req.InitialDelayMs = 1000
+	}
+	if req.BackoffMultiplier <= 0 {
+		req.BackoffMultiplier = 2
+	}
+	if req.MaxDelayMs <= 0 {
+		req.MaxDelayMs = 60000
+	}
+	if req.Jitter < 0 || req.Jitter > 1 {
+		return errors.New("jitter must be between 0 and 1")
+	}
+	if req.BackoffMultiplier < 1 {
+		return errors.New("backoffMultiplier must be >= 1")
+	}
+	if req.InitialDelayMs < 0 {
+		return errors.New("initialDelayMs must be >= 0")
+	}
+	if req.MaxDelayMs < req.InitialDelayMs {
+		return errors.New("maxDelayMs must be >= initialDelayMs")
 	}
 	return nil
 }

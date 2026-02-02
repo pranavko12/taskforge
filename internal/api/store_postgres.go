@@ -26,17 +26,21 @@ func (s *PostgresStore) Ping(ctx context.Context) error {
 
 func (s *PostgresStore) InsertJob(ctx context.Context, jobID string, req SubmitJobRequest) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO jobs (job_id, job_type, payload, idempotency_key, state, max_retries)
-		VALUES ($1, $2, $3, $4, 'PENDING', $5)
-	`, jobID, req.JobType, req.Payload, req.IdempotencyKey, req.MaxRetries)
+		INSERT INTO jobs (
+			job_id, job_type, payload, idempotency_key, state, max_retries,
+			max_attempts, attempt_count, initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at
+		)
+		VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, 0, $7, $8, $9, $10, NOW())
+	`, jobID, req.JobType, req.Payload, req.IdempotencyKey, req.MaxRetries, req.MaxAttempts, req.InitialDelayMs, req.BackoffMultiplier, req.MaxDelayMs, req.Jitter)
 	return err
 }
 
 func (s *PostgresStore) GetJob(ctx context.Context, jobID string) (JobStatusResponse, error) {
 	var resp JobStatusResponse
 	err := s.pool.QueryRow(ctx, `
-		SELECT job_id, job_type, state, retry_count, max_retries, COALESCE(last_error, ''),
-			scheduled_at, available_at, started_at, completed_at, created_at, updated_at
+		SELECT job_id, job_type, state, retry_count, max_retries, max_attempts, attempt_count,
+			initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at,
+			COALESCE(last_error, ''), scheduled_at, available_at, started_at, completed_at, created_at, updated_at
 		FROM jobs
 		WHERE job_id = $1
 	`, jobID).Scan(
@@ -45,6 +49,13 @@ func (s *PostgresStore) GetJob(ctx context.Context, jobID string) (JobStatusResp
 		&resp.State,
 		&resp.RetryCount,
 		&resp.MaxRetries,
+		&resp.MaxAttempts,
+		&resp.AttemptCount,
+		&resp.InitialDelayMs,
+		&resp.BackoffMultiplier,
+		&resp.MaxDelayMs,
+		&resp.Jitter,
+		&resp.NextRunAt,
 		&resp.LastError,
 		&resp.ScheduledAt,
 		&resp.AvailableAt,
@@ -96,8 +107,9 @@ func (s *PostgresStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatus
 	}
 
 	itemsSQL := `
-		SELECT job_id, job_type, state, retry_count, max_retries, COALESCE(last_error, ''),
-			scheduled_at, available_at, started_at, completed_at, created_at, updated_at
+		SELECT job_id, job_type, state, retry_count, max_retries, max_attempts, attempt_count,
+			initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at,
+			COALESCE(last_error, ''), scheduled_at, available_at, started_at, completed_at, created_at, updated_at
 		FROM jobs
 		WHERE ` + where + `
 		ORDER BY created_at DESC
@@ -119,6 +131,13 @@ func (s *PostgresStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatus
 			&resp.State,
 			&resp.RetryCount,
 			&resp.MaxRetries,
+			&resp.MaxAttempts,
+			&resp.AttemptCount,
+			&resp.InitialDelayMs,
+			&resp.BackoffMultiplier,
+			&resp.MaxDelayMs,
+			&resp.Jitter,
+			&resp.NextRunAt,
 			&resp.LastError,
 			&resp.ScheduledAt,
 			&resp.AvailableAt,
