@@ -67,6 +67,12 @@ func TestScheduleRetryStopsAtMaxAttempts(t *testing.T) {
 	if !errors.Is(err, ErrMaxAttemptsExceeded) {
 		t.Fatalf("expected max attempts error, got %v", err)
 	}
+	if !store.terminalCalled {
+		t.Fatalf("expected terminal failure to be recorded")
+	}
+	if store.terminalReason != "max attempts exceeded" {
+		t.Fatalf("unexpected reason: %q", store.terminalReason)
+	}
 }
 
 func TestEnqueueDueRetries(t *testing.T) {
@@ -99,6 +105,8 @@ type fakeStore struct {
 	updateNextRunAt  time.Time
 	due              []string
 	marked           []string
+	terminalCalled   bool
+	terminalReason   string
 }
 
 func (f *fakeStore) GetRetryJob(ctx context.Context, jobID string) (RetryJob, error) {
@@ -117,6 +125,12 @@ func (f *fakeStore) ListDueRetries(ctx context.Context, now time.Time, limit int
 
 func (f *fakeStore) MarkRetryEnqueued(ctx context.Context, jobID string) error {
 	f.marked = append(f.marked, jobID)
+	return nil
+}
+
+func (f *fakeStore) MarkTerminalFailure(ctx context.Context, jobID string, reason string) error {
+	f.terminalCalled = true
+	f.terminalReason = reason
 	return nil
 }
 

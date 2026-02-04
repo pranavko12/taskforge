@@ -85,3 +85,42 @@ func (s *PostgresStore) MarkRetryEnqueued(ctx context.Context, jobID string) err
 	`, jobID)
 	return err
 }
+
+func (s *PostgresStore) MarkTerminalFailure(ctx context.Context, jobID string, reason string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	_, err = tx.Exec(ctx, `
+		UPDATE jobs
+		SET state = 'DLQ',
+			updated_at = NOW()
+		WHERE job_id = $1
+	`, jobID)
+	if err != nil {
+		return err
+	}
+	if reason == "" {
+		reason = "terminal failure"
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO dlq_entries (job_id, reason)
+		VALUES ($1, $2)
+		ON CONFLICT (job_id) DO UPDATE
+		SET reason = EXCLUDED.reason, created_at = NOW()
+	`, jobID, reason)
+	if err != nil {
+		return err
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	return nil
+}

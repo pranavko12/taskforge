@@ -26,6 +26,7 @@ type Store interface {
 	UpdateRetrySchedule(ctx context.Context, jobID string, retryCount int, nextRunAt time.Time) error
 	ListDueRetries(ctx context.Context, now time.Time, limit int) ([]string, error)
 	MarkRetryEnqueued(ctx context.Context, jobID string) error
+	MarkTerminalFailure(ctx context.Context, jobID string, reason string) error
 }
 
 type Queue interface {
@@ -57,6 +58,9 @@ func (s *Scheduler) ScheduleRetry(ctx context.Context, jobID string, now time.Ti
 
 	nextRetryCount := job.RetryCount + 1
 	if job.MaxAttempts > 0 && nextRetryCount >= job.MaxAttempts {
+		if err := s.store.MarkTerminalFailure(ctx, jobID, "max attempts exceeded"); err != nil {
+			return time.Time{}, err
+		}
 		return time.Time{}, ErrMaxAttemptsExceeded
 	}
 
