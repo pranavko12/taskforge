@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -44,10 +46,17 @@ func (s *Server) dlqJob(w http.ResponseWriter, r *http.Request, jobID string) {
 		return
 	}
 
+	var req DLQRequest
+	if err := decodeJSON(w, r, &req); err != nil && !errors.Is(err, io.EOF) {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid json", err.Error())
+		return
+	}
+	req.Reason = strings.TrimSpace(req.Reason)
+
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
-	ok, err := s.store.DLQJob(ctx, jobID)
+	ok, err := s.store.DLQJob(ctx, jobID, req.Reason)
 	if err != nil {
 		if errors.Is(err, errInvalidTransition) {
 			writeAPIError(w, http.StatusConflict, "invalid_state_transition", "invalid state transition", nil)

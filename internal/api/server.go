@@ -62,6 +62,8 @@ func NewServer(cfg config.Config, store Store, queue Queue, deps DependencyCheck
 
 	mux.HandleFunc("/jobs", s.jobs)
 	mux.HandleFunc("/jobs/", s.jobsSubroutes)
+	mux.HandleFunc("/dlq", s.dlq)
+	mux.HandleFunc("/dlq/", s.dlqSubroutes)
 
 	// Implemented in stats.go
 	mux.HandleFunc("/stats", s.stats)
@@ -178,6 +180,113 @@ func (s *Server) jobsSubroutes(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusNotFound, "not_found", "unknown action", nil)
 			return
 		}
+	}
+
+	writeAPIError(w, http.StatusNotFound, "not_found", "not found", nil)
+}
+
+func (s *Server) dlq(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, "invalid_method", "method not allowed", nil)
+		return
+	}
+
+	qp := r.URL.Query()
+	limit := parseInt(qp.Get("limit"), 50)
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset := parseInt(qp.Get("offset"), 0)
+	if offset < 0 {
+		offset = 0
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+
+	items, total, err := s.store.ListDLQ(ctx, limit, offset)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to list dlq", nil)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, DLQListResponse{
+		Items:  items,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	})
+}
+
+func (s *Server) dlqSubroutes(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/dlq/")
+	path = strings.Trim(path, "/")
+	if path == "" {
+		writeAPIError(w, http.StatusBadRequest, "missing_job_id", "missing job id", nil)
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	id := strings.TrimSpace(parts[0])
+	if id == "" {
+		writeAPIError(w, http.StatusBadRequest, "missing_job_id", "missing job id", nil)
+		return
+	}
+
+	if len(parts) == 1 {
+		if r.Method != http.MethodGet {
+			writeAPIError(w, http.StatusMethodNotAllowed, "invalid_method", "method not allowed", nil)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+
+		entry, err := s.store.GetDLQEntry(ctx, id)
+		if err != nil {
+			if errors.Is(err, errNotFound) {
+				writeAPIError(w, http.StatusNotFound, "not_found", "not found", nil)
+				return
+			}
+			writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to fetch dlq entry", nil)
+			return
+		}
+		job, err := s.store.GetJob(ctx, id)
+		if err != nil {
+			if errors.Is(err, errNotFound) {
+				writeAPIError(w, http.StatusNotFound, "not_found", "not found", nil)
+				return
+			}
+			writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to fetch job", nil)
+			return
+		}
+		writeJSON(w, http.StatusOK, DLQInspectResponse{Entry: entry, Job: job})
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "replay" {
+		if r.Method != http.MethodPost {
+			writeAPIError(w, http.StatusMethodNotAllowed, "invalid_method", "method not allowed", nil)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if err := s.store.ReplayDLQ(ctx, id); err != nil {
+			if errors.Is(err, errNotFound) {
+				writeAPIError(w, http.StatusNotFound, "not_found", "not found", nil)
+				return
+			}
+			writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to replay job", nil)
+			return
+		}
+		if err := s.queue.Enqueue(ctx, s.queueName, id); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to enqueue job", nil)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
 
 	writeAPIError(w, http.StatusNotFound, "not_found", "not found", nil)

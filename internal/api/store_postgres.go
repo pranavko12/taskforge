@@ -114,6 +114,102 @@ func (s *PostgresStore) GetJobByIdempotencyKey(ctx context.Context, key string) 
 	return resp, nil
 }
 
+func (s *PostgresStore) InsertDLQEntry(ctx context.Context, jobID string, reason string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO dlq_entries (job_id, reason)
+		VALUES ($1, $2)
+		ON CONFLICT (job_id) DO UPDATE
+		SET reason = EXCLUDED.reason, created_at = NOW()
+	`, jobID, reason)
+	return err
+}
+
+func (s *PostgresStore) ListDLQ(ctx context.Context, limit, offset int) ([]DLQEntry, int, error) {
+	var total int
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(1) FROM dlq_entries`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT job_id, reason, created_at
+		FROM dlq_entries
+		ORDER BY created_at DESC
+		LIMIT $1 OFFSET $2
+	`, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var items []DLQEntry
+	for rows.Next() {
+		var entry DLQEntry
+		if err := rows.Scan(&entry.JobID, &entry.Reason, &entry.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+func (s *PostgresStore) GetDLQEntry(ctx context.Context, jobID string) (DLQEntry, error) {
+	var entry DLQEntry
+	err := s.pool.QueryRow(ctx, `
+		SELECT job_id, reason, created_at
+		FROM dlq_entries
+		WHERE job_id = $1
+	`, jobID).Scan(&entry.JobID, &entry.Reason, &entry.CreatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return DLQEntry{}, errNotFound
+		}
+		return DLQEntry{}, err
+	}
+	return entry, nil
+}
+
+func (s *PostgresStore) ReplayDLQ(ctx context.Context, jobID string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE jobs
+		SET state = 'PENDING',
+			retry_count = 0,
+			attempt_count = 0,
+			last_error = '',
+			next_run_at = NOW(),
+			updated_at = NOW()
+		WHERE job_id = $1
+	`, jobID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errNotFound
+	}
+
+	_, err = tx.Exec(ctx, `DELETE FROM dlq_entries WHERE job_id = $1`, jobID)
+	if err != nil {
+		return err
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *PostgresStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatusResponse, int, error) {
 	whereParts := []string{"1=1"}
 	args := []any{}
@@ -220,7 +316,7 @@ func (s *PostgresStore) RetryJob(ctx context.Context, jobID string) (bool, error
 	return tag.RowsAffected() > 0, nil
 }
 
-func (s *PostgresStore) DLQJob(ctx context.Context, jobID string) (bool, error) {
+func (s *PostgresStore) DLQJob(ctx context.Context, jobID string, reason string) (bool, error) {
 	var state string
 	if err := s.pool.QueryRow(ctx, `SELECT state FROM jobs WHERE job_id = $1`, jobID).Scan(&state); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -238,6 +334,14 @@ func (s *PostgresStore) DLQJob(ctx context.Context, jobID string) (bool, error) 
 	`, StateDLQ, jobID)
 	if err != nil {
 		return false, err
+	}
+	if tag.RowsAffected() > 0 {
+		if reason == "" {
+			reason = "manual dlq"
+		}
+		if err := s.InsertDLQEntry(ctx, jobID, reason); err != nil {
+			return false, err
+		}
 	}
 	return tag.RowsAffected() > 0, nil
 }

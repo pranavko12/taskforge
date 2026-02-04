@@ -16,7 +16,10 @@ This project is built to demonstrate real-world backend system design principles
 - POST `/jobs` with an existing `idempotencyKey` returns the existing job id
 - GET `/jobs/{id}`
 - POST `/jobs/{id}/retry`
-- POST `/jobs/{id}/dlq`
+- POST `/jobs/{id}/dlq` (optional body: `{ "reason": "..." }`)
+- GET `/dlq`
+- GET `/dlq/{id}`
+- POST `/dlq/{id}/replay`
 
 All error responses use a consistent JSON shape: `{ "code": "...", "message": "...", "details": ... }`.
 Each response includes an `X-Request-ID` header for tracing.

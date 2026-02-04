@@ -57,3 +57,19 @@ type JobsQuery struct {
 	JobType string
 	Q       string
 }
+
+type DLQRequest struct {
+	Reason string `json:"reason"`
+}
+
+type DLQListResponse struct {
+	Items  []DLQEntry `json:"items"`
+	Total  int        `json:"total"`
+	Limit  int        `json:"limit"`
+	Offset int        `json:"offset"`
+}
+
+type DLQInspectResponse struct {
+	Entry DLQEntry          `json:"entry"`
+	Job   JobStatusResponse `json:"job"`
+}

@@ -9,7 +9,7 @@ type Store interface {
 	GetJobByIdempotencyKey(ctx context.Context, key string) (JobStatusResponse, error)
 	QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatusResponse, int, error)
 	RetryJob(ctx context.Context, jobID string) (bool, error)
-	DLQJob(ctx context.Context, jobID string) (bool, error)
+	DLQJob(ctx context.Context, jobID string, reason string) (bool, error)
 	Stats(ctx context.Context) (StatsCounts, error)
 }
 

@@ -15,7 +15,8 @@ import (
 )
 
 func TestHealthzAlwaysOK(t *testing.T) {
-	s := newTestServer(fakeStore{}, fakeQueue{})
+	q := &fakeQueue{}
+	s := newTestServer(&fakeStore{}, q)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 
@@ -27,7 +28,8 @@ func TestHealthzAlwaysOK(t *testing.T) {
 }
 
 func TestReadyzDependsOnDeps(t *testing.T) {
-	s := newTestServer(fakeStore{pingErr: errTest}, fakeQueue{})
+	q := &fakeQueue{}
+	s := newTestServer(&fakeStore{pingErr: errTest}, q)
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
 
@@ -37,7 +39,8 @@ func TestReadyzDependsOnDeps(t *testing.T) {
 		t.Fatalf("expected 503, got %d", rec.Code)
 	}
 
-	s = newTestServer(fakeStore{}, fakeQueue{})
+	q = &fakeQueue{}
+	s = newTestServer(&fakeStore{}, q)
 	req = httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec = httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
@@ -48,7 +51,8 @@ func TestReadyzDependsOnDeps(t *testing.T) {
 }
 
 func TestRequestIDHeaderSet(t *testing.T) {
-	s := newTestServer(fakeStore{}, fakeQueue{})
+	q := &fakeQueue{}
+	s := newTestServer(&fakeStore{}, q)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 
@@ -60,7 +64,8 @@ func TestRequestIDHeaderSet(t *testing.T) {
 }
 
 func TestErrorShapeInvalidJSON(t *testing.T) {
-	s := newTestServer(fakeStore{}, fakeQueue{})
+	q := &fakeQueue{}
+	s := newTestServer(&fakeStore{}, q)
 	req := httptest.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString("{invalid"))
 	rec := httptest.NewRecorder()
 
@@ -74,7 +79,8 @@ func TestIdempotencyReturnsExistingJob(t *testing.T) {
 		insertErr:     errUnique,
 		getByKeyResp:  JobStatusResponse{JobID: "existing"},
 	}
-	s := newTestServer(store, fakeQueue{})
+	q := &fakeQueue{}
+	s := newTestServer(&store, q)
 
 	body := `{"jobType":"demo","payload":{"a":1},"idempotencyKey":"abc"}`
 	req := httptest.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString(body))
@@ -99,7 +105,8 @@ func TestJobsListOK(t *testing.T) {
 		queryJobsResp: []JobStatusResponse{{JobID: "job-1", JobType: "demo"}},
 		queryJobsTotal: 1,
 	}
-	s := newTestServer(store, fakeQueue{})
+	q := &fakeQueue{}
+	s := newTestServer(&store, q)
 	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
 	rec := httptest.NewRecorder()
 
@@ -112,7 +119,8 @@ func TestJobsListOK(t *testing.T) {
 
 func TestGetJobNotFound(t *testing.T) {
 	store := fakeStore{getJobErr: errNotFound}
-	s := newTestServer(store, fakeQueue{})
+	q := &fakeQueue{}
+	s := newTestServer(&store, q)
 	req := httptest.NewRequest(http.MethodGet, "/jobs/missing", nil)
 	rec := httptest.NewRecorder()
 
@@ -123,7 +131,8 @@ func TestGetJobNotFound(t *testing.T) {
 
 func TestStatsOK(t *testing.T) {
 	store := fakeStore{statsCounts: StatsCounts{Total: 2, Pending: 1, Failed: 1, DLQ: 0}}
-	s := newTestServer(store, fakeQueue{})
+	q := &fakeQueue{}
+	s := newTestServer(&store, q)
 	req := httptest.NewRequest(http.MethodGet, "/stats", nil)
 	rec := httptest.NewRecorder()
 
@@ -180,8 +189,15 @@ type fakeStore struct {
 	retryErr      error
 	dlqOK         bool
 	dlqErr        error
+	dlqCalled     bool
+	dlqReason     string
 	statsCounts   StatsCounts
 	statsErr      error
+	dlqEntries    []DLQEntry
+	dlqTotal      int
+	getDLQEntryResp DLQEntry
+	getDLQEntryErr  error
+	replayErr     error
 }
 
 func (f fakeStore) Ping(ctx context.Context) error {
@@ -220,10 +236,12 @@ func (f fakeStore) RetryJob(ctx context.Context, jobID string) (bool, error) {
 	return f.retryOK, nil
 }
 
-func (f fakeStore) DLQJob(ctx context.Context, jobID string) (bool, error) {
+func (f *fakeStore) DLQJob(ctx context.Context, jobID string, reason string) (bool, error) {
 	if f.dlqErr != nil {
 		return false, f.dlqErr
 	}
+	f.dlqCalled = true
+	f.dlqReason = reason
 	return f.dlqOK, nil
 }
 
@@ -235,14 +253,16 @@ func (f fakeStore) Stats(ctx context.Context) (StatsCounts, error) {
 }
 
 type fakeQueue struct {
-	pingErr   error
+	pingErr    error
 	enqueueErr error
+	enqueued   []string
 }
 
-func (f fakeQueue) Ping(ctx context.Context) error {
+func (f *fakeQueue) Ping(ctx context.Context) error {
 	return f.pingErr
 }
 
-func (f fakeQueue) Enqueue(ctx context.Context, queueName string, jobID string) error {
+func (f *fakeQueue) Enqueue(ctx context.Context, queueName string, jobID string) error {
+	f.enqueued = append(f.enqueued, jobID)
 	return f.enqueueErr
 }
