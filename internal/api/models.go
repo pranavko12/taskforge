@@ -58,6 +58,12 @@ type JobsQuery struct {
 	Q       string
 }
 
+type DLQEntry struct {
+	JobID     string    `json:"jobId"`
+	Reason    string    `json:"reason"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 type DLQRequest struct {
 	Reason string `json:"reason"`
 }
