@@ -12,6 +12,7 @@ import (
 	"github.com/pranavko12/taskforge/internal/queue"
 	"github.com/pranavko12/taskforge/internal/scheduler"
 	"github.com/pranavko12/taskforge/internal/storage"
+	"github.com/pranavko12/taskforge/internal/worker"
 )
 
 func main() {
@@ -39,6 +40,8 @@ func main() {
 
 	store := scheduler.NewPostgresStore(pg.Pool)
 	s := scheduler.New(store, rd, cfg.QueueName)
+	leaseStore := worker.NewPostgresStore(pg.Pool)
+	reaper := worker.NewLeaseReaper(leaseStore, rd, cfg.QueueName)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -51,6 +54,9 @@ func main() {
 		case <-ticker.C:
 			if _, err := s.EnqueueDueRetries(ctx, time.Now().UTC()); err != nil {
 				logger.Error("enqueue due retries failed", "err", err)
+			}
+			if _, err := reaper.RequeueExpiredLeases(ctx, time.Now().UTC()); err != nil {
+				logger.Error("requeue expired leases failed", "err", err)
 			}
 		case <-stop:
 			return
