@@ -39,6 +39,8 @@ Common:
 - `REDIS_PASSWORD` (default empty)
 - `LOG_LEVEL` (debug|info|warn|error, default `info`)
 - `UI_DIR` (default `./internal/api/ui`)
+- `WORKER_CONCURRENCY` (default `10`)
+- `RATE_LIMIT_PER_SEC` (default `0`, disabled)
 
 ---
 
