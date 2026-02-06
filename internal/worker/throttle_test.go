@@ -38,7 +38,7 @@ func TestConcurrencyThrottleBlocks(t *testing.T) {
 }
 
 func TestRateLimitBlocks(t *testing.T) {
-	tl := NewThrottler(0, 10) // 10/s => 100ms interval
+	tl := NewThrottler(0, 1) // 1/s => ~1s interval
 	defer tl.Close()
 
 	ctx := context.Background()
@@ -50,7 +50,7 @@ func TestRateLimitBlocks(t *testing.T) {
 	if err := tl.Acquire(ctx); err != nil {
 		t.Fatalf("acquire 2 failed: %v", err)
 	}
-	if time.Since(start) < 80*time.Millisecond {
+	if time.Since(start) < 900*time.Millisecond {
 		t.Fatalf("expected rate limit wait")
 	}
 }
