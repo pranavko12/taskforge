@@ -20,6 +20,7 @@ This project is built to demonstrate real-world backend system design principles
 - GET `/dlq`
 - GET `/dlq/{id}`
 - POST `/dlq/{id}/replay`
+- GET `/metrics`
 
 All error responses use a consistent JSON shape: `{ "code": "...", "message": "...", "details": ... }`.
 Each response includes an `X-Request-ID` header for tracing.
@@ -41,6 +42,24 @@ Common:
 - `UI_DIR` (default `./internal/api/ui`)
 - `WORKER_CONCURRENCY` (default `10`)
 - `RATE_LIMIT_PER_SEC` (default `0`, disabled)
+
+---
+
+## Metrics
+
+Exposed at `GET /metrics` in Prometheus format.
+
+Core metrics:
+- `taskforge_queue_depth{queue}`
+- `taskforge_dlq_count`
+- `taskforge_job_attempts_total{queue}`
+- `taskforge_job_success_total{queue}`
+- `taskforge_job_failure_total{queue}`
+- `taskforge_job_runtime_seconds_bucket{queue,...}`
+- `taskforge_job_time_in_queue_seconds_bucket{queue,...}`
+- `taskforge_worker_utilization{queue}`
+- `taskforge_worker_concurrency_throttled_total{queue}`
+- `taskforge_worker_rate_throttled_total{queue}`
 
 ---
 

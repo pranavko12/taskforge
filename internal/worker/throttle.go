@@ -3,17 +3,22 @@ package worker
 import (
 	"context"
 	"time"
+
+	"github.com/pranavko12/taskforge/internal/metrics"
 )
 
 type Throttler struct {
+	queueName  string
 	sem        chan struct{}
 	tokens     chan struct{}
 	interval   time.Duration
 	stopTokens chan struct{}
+	capacity   int
+	inFlight   int
 }
 
-func NewThrottler(concurrency int, ratePerSec int) *Throttler {
-	t := &Throttler{}
+func NewThrottler(queueName string, concurrency int, ratePerSec int) *Throttler {
+	t := &Throttler{queueName: queueName, capacity: concurrency}
 	if concurrency > 0 {
 		t.sem = make(chan struct{}, concurrency)
 		for i := 0; i < concurrency; i++ {
@@ -59,7 +64,7 @@ func (t *Throttler) Acquire(ctx context.Context) error {
 		select {
 		case <-t.sem:
 		default:
-			metricConcurrencyThrottled.Add(1)
+			incConcurrencyThrottled(t.queueName)
 			select {
 			case <-t.sem:
 			case <-ctx.Done():
@@ -72,7 +77,7 @@ func (t *Throttler) Acquire(ctx context.Context) error {
 		select {
 		case <-t.tokens:
 		default:
-			metricRateThrottled.Add(1)
+			incRateThrottled(t.queueName)
 			select {
 			case <-t.tokens:
 			case <-ctx.Done():
@@ -83,11 +88,19 @@ func (t *Throttler) Acquire(ctx context.Context) error {
 			}
 		}
 	}
+	if t.capacity > 0 {
+		t.inFlight++
+		metrics.SetWorkerUtilization(t.queueName, float64(t.inFlight)/float64(t.capacity))
+	}
 	return nil
 }
 
 func (t *Throttler) Release() {
 	if t.sem != nil {
 		t.sem <- struct{}{}
+	}
+	if t.capacity > 0 && t.inFlight > 0 {
+		t.inFlight--
+		metrics.SetWorkerUtilization(t.queueName, float64(t.inFlight)/float64(t.capacity))
 	}
 }

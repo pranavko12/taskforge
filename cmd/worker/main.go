@@ -15,7 +15,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	_ = worker.NewRunner(worker.NewThrottler(cfg.WorkerConcurrency, cfg.RateLimitPerSec))
+	throttler := worker.NewThrottler(cfg.QueueName, cfg.WorkerConcurrency, cfg.RateLimitPerSec)
+	_ = worker.NewRunner(cfg.QueueName, throttler)
 
 	// Placeholder: actual job polling/processing should use Runner.Execute to enforce limits.
 	select {}

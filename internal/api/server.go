@@ -67,6 +67,7 @@ func NewServer(cfg config.Config, store Store, queue Queue, deps DependencyCheck
 
 	// Implemented in stats.go
 	mux.HandleFunc("/stats", s.stats)
+	mux.Handle("/metrics", metricsHandler(s.store, s.queue, s.queueName))
 
 	// Prefer embedded UI if available; fallback to disk.
 	if h, err := uiHandler(); err == nil {

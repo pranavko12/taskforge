@@ -1,8 +1,11 @@
 package worker
 
-import "expvar"
+import "github.com/pranavko12/taskforge/internal/metrics"
 
-var (
-	metricConcurrencyThrottled = expvar.NewInt("worker_concurrency_throttled_total")
-	metricRateThrottled        = expvar.NewInt("worker_rate_throttled_total")
-)
+func incConcurrencyThrottled(queue string) {
+	metrics.IncConcurrencyThrottled(queue)
+}
+
+func incRateThrottled(queue string) {
+	metrics.IncRateThrottled(queue)
+}

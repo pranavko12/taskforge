@@ -7,7 +7,7 @@ import (
 )
 
 func TestConcurrencyThrottleBlocks(t *testing.T) {
-	tl := NewThrottler(1, 0)
+	tl := NewThrottler("jobs:ready", 1, 0)
 	defer tl.Close()
 
 	ctx := context.Background()
@@ -38,7 +38,7 @@ func TestConcurrencyThrottleBlocks(t *testing.T) {
 }
 
 func TestRateLimitBlocks(t *testing.T) {
-	tl := NewThrottler(0, 1) // 1/s => ~1s interval
+	tl := NewThrottler("jobs:ready", 0, 1) // 1/s => ~1s interval
 	defer tl.Close()
 
 	ctx := context.Background()

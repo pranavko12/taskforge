@@ -2,14 +2,18 @@ package worker
 
 import (
 	"context"
+	"time"
+
+	"github.com/pranavko12/taskforge/internal/metrics"
 )
 
 type Runner struct {
 	throttler *Throttler
+	queueName string
 }
 
-func NewRunner(throttler *Throttler) *Runner {
-	return &Runner{throttler: throttler}
+func NewRunner(queueName string, throttler *Throttler) *Runner {
+	return &Runner{queueName: queueName, throttler: throttler}
 }
 
 func (r *Runner) Execute(ctx context.Context, fn func(context.Context) error) error {
@@ -19,5 +23,19 @@ func (r *Runner) Execute(ctx context.Context, fn func(context.Context) error) er
 		}
 		defer r.throttler.Release()
 	}
-	return fn(ctx)
+	metrics.IncAttempts(r.queueName)
+	start := time.Now()
+	err := fn(ctx)
+	metrics.ObserveRuntime(r.queueName, time.Since(start).Seconds())
+	if err != nil {
+		metrics.IncFailure(r.queueName)
+		return err
+	}
+	metrics.IncSuccess(r.queueName)
+	return nil
+}
+
+func (r *Runner) ExecuteWithQueueTime(ctx context.Context, timeInQueue time.Duration, fn func(context.Context) error) error {
+	metrics.ObserveTimeInQueue(r.queueName, timeInQueue.Seconds())
+	return r.Execute(ctx, fn)
 }

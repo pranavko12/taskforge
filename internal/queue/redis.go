@@ -33,3 +33,7 @@ func (r *Redis) Ping(ctx context.Context) error {
 func (r *Redis) Enqueue(ctx context.Context, queueName string, jobID string) error {
 	return r.Client.LPush(ctx, queueName, jobID).Err()
 }
+
+func (r *Redis) QueueDepth(ctx context.Context, queueName string) (int64, error) {
+	return r.Client.LLen(ctx, queueName).Result()
+}

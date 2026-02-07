@@ -266,3 +266,7 @@ func (f *fakeQueue) Enqueue(ctx context.Context, queueName string, jobID string)
 	f.enqueued = append(f.enqueued, jobID)
 	return f.enqueueErr
 }
+
+func (f *fakeQueue) QueueDepth(ctx context.Context, queueName string) (int64, error) {
+	return int64(len(f.enqueued)), nil
+}
