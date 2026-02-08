@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type ctxKey string
@@ -33,13 +35,29 @@ func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 		next.ServeHTTP(rec, r)
 
 		reqID := requestIDFromContext(r.Context())
+		traceID := traceIDFromContext(r.Context())
 		logger.Info("request",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rec.status,
 			"latency_ms", time.Since(start).Milliseconds(),
 			"request_id", reqID,
+			"trace_id", traceID,
 		)
+	})
+}
+
+func tracingMiddleware(tracer trace.Tracer, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, span := tracer.Start(r.Context(), "http.request",
+			trace.WithSpanKind(trace.SpanKindServer),
+			trace.WithAttributes(
+				attribute.String("http.method", r.Method),
+				attribute.String("http.target", r.URL.Path),
+			),
+		)
+		defer span.End()
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -48,6 +66,14 @@ func requestIDFromContext(ctx context.Context) string {
 		return v
 	}
 	return ""
+}
+
+func traceIDFromContext(ctx context.Context) string {
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return ""
+	}
+	return sc.TraceID().String()
 }
 
 type statusRecorder struct {

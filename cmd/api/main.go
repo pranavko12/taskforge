@@ -15,6 +15,7 @@ import (
 	"github.com/pranavko12/taskforge/internal/config"
 	"github.com/pranavko12/taskforge/internal/queue"
 	"github.com/pranavko12/taskforge/internal/storage"
+	"github.com/pranavko12/taskforge/internal/telemetry"
 )
 
 func main() {
@@ -35,6 +36,12 @@ func main() {
 		level = slog.LevelError
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+
+	shutdown, err := telemetry.Init(ctx, cfg, "taskforge-api")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
 
 	pg, err := storage.NewPostgres(ctx, cfg)
 	if err != nil {

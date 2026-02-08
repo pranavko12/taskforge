@@ -25,14 +25,14 @@ func (s *PostgresStore) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
 }
 
-func (s *PostgresStore) InsertJob(ctx context.Context, jobID string, req SubmitJobRequest) error {
+func (s *PostgresStore) InsertJob(ctx context.Context, jobID string, req SubmitJobRequest, traceparent string) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO jobs (
 			job_id, job_type, payload, idempotency_key, state, max_retries,
-			max_attempts, attempt_count, initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at
+			max_attempts, attempt_count, initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at, traceparent
 		)
-		VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, 0, $7, $8, $9, $10, NOW())
-	`, jobID, req.JobType, req.Payload, req.IdempotencyKey, req.MaxRetries, req.MaxAttempts, req.InitialDelayMs, req.BackoffMultiplier, req.MaxDelayMs, req.Jitter)
+		VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, 0, $7, $8, $9, $10, NOW(), $11)
+	`, jobID, req.JobType, req.Payload, req.IdempotencyKey, req.MaxRetries, req.MaxAttempts, req.InitialDelayMs, req.BackoffMultiplier, req.MaxDelayMs, req.Jitter, traceparent)
 	return err
 }
 
@@ -40,7 +40,7 @@ func (s *PostgresStore) GetJob(ctx context.Context, jobID string) (JobStatusResp
 	var resp JobStatusResponse
 	err := s.pool.QueryRow(ctx, `
 		SELECT job_id, job_type, state, retry_count, max_retries, max_attempts, attempt_count,
-			initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at,
+			initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at, traceparent,
 			COALESCE(last_error, ''), scheduled_at, available_at, started_at, completed_at, created_at, updated_at
 		FROM jobs
 		WHERE job_id = $1
@@ -57,6 +57,7 @@ func (s *PostgresStore) GetJob(ctx context.Context, jobID string) (JobStatusResp
 		&resp.MaxDelayMs,
 		&resp.Jitter,
 		&resp.NextRunAt,
+		&resp.Traceparent,
 		&resp.LastError,
 		&resp.ScheduledAt,
 		&resp.AvailableAt,
@@ -78,7 +79,7 @@ func (s *PostgresStore) GetJobByIdempotencyKey(ctx context.Context, key string) 
 	var resp JobStatusResponse
 	err := s.pool.QueryRow(ctx, `
 		SELECT job_id, job_type, state, retry_count, max_retries, max_attempts, attempt_count,
-			initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at,
+			initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at, traceparent,
 			COALESCE(last_error, ''), scheduled_at, available_at, started_at, completed_at, created_at, updated_at
 		FROM jobs
 		WHERE idempotency_key = $1
@@ -97,6 +98,7 @@ func (s *PostgresStore) GetJobByIdempotencyKey(ctx context.Context, key string) 
 		&resp.MaxDelayMs,
 		&resp.Jitter,
 		&resp.NextRunAt,
+		&resp.Traceparent,
 		&resp.LastError,
 		&resp.ScheduledAt,
 		&resp.AvailableAt,
@@ -210,6 +212,18 @@ func (s *PostgresStore) ReplayDLQ(ctx context.Context, jobID string) error {
 	return nil
 }
 
+func (s *PostgresStore) GetTraceparent(ctx context.Context, jobID string) (string, error) {
+	var traceparent string
+	err := s.pool.QueryRow(ctx, `SELECT COALESCE(traceparent, '') FROM jobs WHERE job_id = $1`, jobID).Scan(&traceparent)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", errNotFound
+		}
+		return "", err
+	}
+	return traceparent, nil
+}
+
 func (s *PostgresStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatusResponse, int, error) {
 	whereParts := []string{"1=1"}
 	args := []any{}
@@ -245,7 +259,7 @@ func (s *PostgresStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatus
 
 	itemsSQL := `
 		SELECT job_id, job_type, state, retry_count, max_retries, max_attempts, attempt_count,
-			initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at,
+			initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at, traceparent,
 			COALESCE(last_error, ''), scheduled_at, available_at, started_at, completed_at, created_at, updated_at
 		FROM jobs
 		WHERE ` + where + `
@@ -275,6 +289,7 @@ func (s *PostgresStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatus
 			&resp.MaxDelayMs,
 			&resp.Jitter,
 			&resp.NextRunAt,
+			&resp.Traceparent,
 			&resp.LastError,
 			&resp.ScheduledAt,
 			&resp.AvailableAt,

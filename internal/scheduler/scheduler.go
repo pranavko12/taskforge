@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/pranavko12/taskforge/internal/retry"
+	"github.com/pranavko12/taskforge/internal/telemetry"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 var ErrMaxAttemptsExceeded = errors.New("max attempts exceeded")
@@ -19,6 +22,7 @@ type RetryJob struct {
 	BackoffMultiplier float64
 	MaxDelayMs        int
 	Jitter            float64
+	Traceparent       string
 }
 
 type Store interface {
@@ -55,6 +59,14 @@ func (s *Scheduler) ScheduleRetry(ctx context.Context, jobID string, now time.Ti
 	if err != nil {
 		return time.Time{}, err
 	}
+
+	spanCtx := telemetry.ContextWithTraceparent(job.Traceparent)
+	tracer := otel.Tracer("taskforge/scheduler")
+	spanCtx, span := tracer.Start(spanCtx, "schedule_retry",
+		attribute.String("job_id", jobID),
+		attribute.String("queue", s.queueName),
+	)
+	defer span.End()
 
 	nextRetryCount := job.RetryCount + 1
 	if job.MaxAttempts > 0 && nextRetryCount >= job.MaxAttempts {

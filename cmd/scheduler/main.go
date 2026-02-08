@@ -12,6 +12,7 @@ import (
 	"github.com/pranavko12/taskforge/internal/queue"
 	"github.com/pranavko12/taskforge/internal/scheduler"
 	"github.com/pranavko12/taskforge/internal/storage"
+	"github.com/pranavko12/taskforge/internal/telemetry"
 	"github.com/pranavko12/taskforge/internal/worker"
 )
 
@@ -24,6 +25,13 @@ func main() {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	ctx := context.Background()
+
+	shutdown, err := telemetry.Init(ctx, cfg, "taskforge-scheduler")
+	if err != nil {
+		logger.Error("tracing init error", "err", err)
+		os.Exit(1)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
 
 	pg, err := storage.NewPostgres(ctx, cfg)
 	if err != nil {

@@ -18,6 +18,8 @@ type Config struct {
 	RedisDB           int
 	WorkerConcurrency int
 	RateLimitPerSec   int
+	TracingEnabled    bool
+	TracingExporter   string
 }
 
 type Error struct {
@@ -40,6 +42,8 @@ func Load() (Config, error) {
 		RedisDB:           getEnvInt("REDIS_DB", 0),
 		WorkerConcurrency: getEnvInt("WORKER_CONCURRENCY", 10),
 		RateLimitPerSec:   getEnvInt("RATE_LIMIT_PER_SEC", 0),
+		TracingEnabled:    getEnvBool("TRACING_ENABLED", false),
+		TracingExporter:   strings.ToLower(getEnv("TRACING_EXPORTER", "stdout")),
 	}
 
 	var issues []string
@@ -67,6 +71,9 @@ func Load() (Config, error) {
 	if cfg.RateLimitPerSec < 0 {
 		issues = append(issues, "RATE_LIMIT_PER_SEC must be >= 0")
 	}
+	if cfg.TracingExporter != "stdout" && cfg.TracingExporter != "none" {
+		issues = append(issues, fmt.Sprintf("TRACING_EXPORTER must be stdout or none (got %q)", cfg.TracingExporter))
+	}
 	if len(issues) > 0 {
 		return Config{}, &Error{Issues: issues}
 	}
@@ -92,4 +99,19 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	switch strings.ToLower(v) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	default:
+		return fallback
+	}
 }

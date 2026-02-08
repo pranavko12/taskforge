@@ -13,6 +13,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/pranavko12/taskforge/internal/config"
 )
@@ -28,6 +32,7 @@ type Server struct {
 	uiDir     string
 	http      *http.Server
 	handler   http.Handler
+	tracer    trace.Tracer
 }
 
 func NewServer(cfg config.Config, store Store, queue Queue, deps DependencyChecker, logger *slog.Logger) *Server {
@@ -55,6 +60,7 @@ func NewServer(cfg config.Config, store Store, queue Queue, deps DependencyCheck
 	if s.deps == nil {
 		s.deps = NewDependencyChecker(s.store, s.queue)
 	}
+	s.tracer = otel.Tracer("taskforge/api")
 
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/readyz", s.readyz)
@@ -76,7 +82,7 @@ func NewServer(cfg config.Config, store Store, queue Queue, deps DependencyCheck
 		mux.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(s.uiDir))))
 	}
 
-	s.handler = requestIDMiddleware(loggingMiddleware(s.logger, mux))
+	s.handler = requestIDMiddleware(tracingMiddleware(s.tracer, loggingMiddleware(s.logger, mux)))
 	s.http.Handler = s.handler
 
 	return s
@@ -325,7 +331,11 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
-	if err := s.store.InsertJob(ctx, jobID, req); err != nil {
+	traceparent := traceparentFromContext(r.Context())
+	if span := trace.SpanFromContext(r.Context()); span != nil {
+		span.SetAttributes(attribute.String("job_id", jobID), attribute.String("queue", s.queueName))
+	}
+	if err := s.store.InsertJob(ctx, jobID, req, traceparent); err != nil {
 		if isUniqueViolation(err) {
 			existing, getErr := s.store.GetJobByIdempotencyKey(ctx, req.IdempotencyKey)
 			if getErr != nil {
@@ -390,6 +400,12 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 		return errors.New("extra data")
 	}
 	return nil
+}
+
+func traceparentFromContext(ctx context.Context) string {
+	carrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	return carrier.Get("traceparent")
 }
 
 func applyRetryPolicyDefaults(req *SubmitJobRequest) error {

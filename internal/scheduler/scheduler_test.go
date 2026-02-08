@@ -21,6 +21,7 @@ func TestScheduleRetrySetsNextRunAtDeterministically(t *testing.T) {
 			BackoffMultiplier: 2,
 			MaxDelayMs:        60000,
 			Jitter:            0.25,
+			Traceparent:       "",
 		},
 	}
 	q := &fakeQueue{}

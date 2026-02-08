@@ -10,6 +10,7 @@ type LeaseStore interface {
 	RenewLease(ctx context.Context, jobID string, owner string, now time.Time, leaseFor time.Duration) (bool, error)
 	ListExpiredLeases(ctx context.Context, now time.Time, limit int) ([]string, error)
 	ResetLease(ctx context.Context, jobID string) error
+	GetTraceparent(ctx context.Context, jobID string) (string, error)
 }
 
 type Queue interface {

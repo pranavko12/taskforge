@@ -204,7 +204,7 @@ func (f fakeStore) Ping(ctx context.Context) error {
 	return f.pingErr
 }
 
-func (f fakeStore) InsertJob(ctx context.Context, jobID string, req SubmitJobRequest) error {
+func (f fakeStore) InsertJob(ctx context.Context, jobID string, req SubmitJobRequest, traceparent string) error {
 	return f.insertErr
 }
 
@@ -220,6 +220,10 @@ func (f fakeStore) GetJobByIdempotencyKey(ctx context.Context, key string) (JobS
 		return JobStatusResponse{}, f.getByKeyErr
 	}
 	return f.getByKeyResp, nil
+}
+
+func (f fakeStore) GetTraceparent(ctx context.Context, jobID string) (string, error) {
+	return "", nil
 }
 
 func (f fakeStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatusResponse, int, error) {

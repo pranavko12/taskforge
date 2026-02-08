@@ -41,6 +41,7 @@ type JobStatusResponse struct {
 	CompletedAt       *time.Time `json:"completedAt,omitempty"`
 	CreatedAt         time.Time  `json:"createdAt"`
 	UpdatedAt         time.Time  `json:"updatedAt"`
+	Traceparent       string     `json:"traceparent,omitempty"`
 }
 
 type JobsListResponse struct {

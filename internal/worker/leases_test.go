@@ -135,3 +135,7 @@ func (s *fakeLeaseStore) ResetLease(ctx context.Context, jobID string) error {
 	s.expiresAt = time.Time{}
 	return nil
 }
+
+func (s *fakeLeaseStore) GetTraceparent(ctx context.Context, jobID string) (string, error) {
+	return "", nil
+}

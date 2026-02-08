@@ -18,7 +18,7 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 func (s *PostgresStore) GetRetryJob(ctx context.Context, jobID string) (RetryJob, error) {
 	var job RetryJob
 	err := s.pool.QueryRow(ctx, `
-		SELECT job_id, retry_count, max_attempts, initial_delay_ms, backoff_multiplier, max_delay_ms, jitter
+		SELECT job_id, retry_count, max_attempts, initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, COALESCE(traceparent, '')
 		FROM jobs
 		WHERE job_id = $1
 	`, jobID).Scan(
@@ -29,6 +29,7 @@ func (s *PostgresStore) GetRetryJob(ctx context.Context, jobID string) (RetryJob
 		&job.BackoffMultiplier,
 		&job.MaxDelayMs,
 		&job.Jitter,
+		&job.Traceparent,
 	)
 	if err != nil {
 		return RetryJob{}, err

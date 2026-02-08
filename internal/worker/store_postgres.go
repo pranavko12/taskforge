@@ -89,3 +89,9 @@ func (s *PostgresStore) ResetLease(ctx context.Context, jobID string) error {
 	`, jobID)
 	return err
 }
+
+func (s *PostgresStore) GetTraceparent(ctx context.Context, jobID string) (string, error) {
+	var traceparent string
+	err := s.pool.QueryRow(ctx, `SELECT COALESCE(traceparent, '') FROM jobs WHERE job_id = $1`, jobID).Scan(&traceparent)
+	return traceparent, err
+}
