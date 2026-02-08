@@ -63,7 +63,7 @@ func (s *Scheduler) ScheduleRetry(ctx context.Context, jobID string, now time.Ti
 
 	spanCtx := telemetry.ContextWithTraceparent(job.Traceparent)
 	tracer := otel.Tracer("taskforge/scheduler")
-	spanCtx, span := tracer.Start(spanCtx, "schedule_retry",
+	_, span := tracer.Start(spanCtx, "schedule_retry",
 		trace.WithAttributes(
 			attribute.String("job_id", jobID),
 			attribute.String("queue", s.queueName),
