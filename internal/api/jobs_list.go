@@ -33,7 +33,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 
 	items, total, err := s.store.QueryJobs(ctx, JobsQuery{
 		Limit:   limit,
-		Offset: offset,
+		Offset:  offset,
 		State:   state,
 		JobType: jobType,
 		Q:       search,
@@ -44,9 +44,9 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, JobsListResponse{
-		Items: items,
-		Total: total,
-		Limit: limit,
+		Items:  items,
+		Total:  total,
+		Limit:  limit,
 		Offset: offset,
 	})
 }

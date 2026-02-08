@@ -15,11 +15,11 @@ type StatsPoint struct {
 }
 
 type StatsResponse struct {
-	Total   int         `json:"total"`
-	Pending int         `json:"pending"`
-	Failed  int         `json:"failed"`
-	DLQ     int         `json:"dlq"`
-	Points []StatsPoint `json:"points"`
+	Total   int          `json:"total"`
+	Pending int          `json:"pending"`
+	Failed  int          `json:"failed"`
+	DLQ     int          `json:"dlq"`
+	Points  []StatsPoint `json:"points"`
 }
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {

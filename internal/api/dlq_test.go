@@ -16,9 +16,9 @@ func TestDLQListAndInspect(t *testing.T) {
 		dlqEntries: []DLQEntry{
 			{JobID: "job-1", Reason: "failed", CreatedAt: now},
 		},
-		dlqTotal: 1,
+		dlqTotal:        1,
 		getDLQEntryResp: DLQEntry{JobID: "job-1", Reason: "failed", CreatedAt: now},
-		getJobResp: JobStatusResponse{JobID: "job-1"},
+		getJobResp:      JobStatusResponse{JobID: "job-1"},
 	}
 	q := &fakeQueue{}
 	s := newTestServer(&store, q)

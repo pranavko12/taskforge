@@ -15,4 +15,3 @@ func ContextWithTraceparent(traceparent string) context.Context {
 	carrier.Set("traceparent", traceparent)
 	return otel.GetTextMapPropagator().Extract(context.Background(), carrier)
 }
-

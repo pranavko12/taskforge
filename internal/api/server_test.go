@@ -76,8 +76,8 @@ func TestErrorShapeInvalidJSON(t *testing.T) {
 
 func TestIdempotencyReturnsExistingJob(t *testing.T) {
 	store := fakeStore{
-		insertErr:     errUnique,
-		getByKeyResp:  JobStatusResponse{JobID: "existing"},
+		insertErr:    errUnique,
+		getByKeyResp: JobStatusResponse{JobID: "existing"},
 	}
 	q := &fakeQueue{}
 	s := newTestServer(&store, q)
@@ -102,7 +102,7 @@ func TestIdempotencyReturnsExistingJob(t *testing.T) {
 
 func TestJobsListOK(t *testing.T) {
 	store := fakeStore{
-		queryJobsResp: []JobStatusResponse{{JobID: "job-1", JobType: "demo"}},
+		queryJobsResp:  []JobStatusResponse{{JobID: "job-1", JobType: "demo"}},
 		queryJobsTotal: 1,
 	}
 	q := &fakeQueue{}
@@ -176,28 +176,28 @@ var errTest = errors.New("test error")
 var errUnique = errors.New("duplicate key value violates unique constraint")
 
 type fakeStore struct {
-	pingErr       error
-	insertErr     error
-	getJobResp    JobStatusResponse
-	getJobErr     error
-	getByKeyResp  JobStatusResponse
-	getByKeyErr   error
-	queryJobsResp []JobStatusResponse
-	queryJobsTotal int
-	queryJobsErr  error
-	retryOK       bool
-	retryErr      error
-	dlqOK         bool
-	dlqErr        error
-	dlqCalled     bool
-	dlqReason     string
-	statsCounts   StatsCounts
-	statsErr      error
-	dlqEntries    []DLQEntry
-	dlqTotal      int
+	pingErr         error
+	insertErr       error
+	getJobResp      JobStatusResponse
+	getJobErr       error
+	getByKeyResp    JobStatusResponse
+	getByKeyErr     error
+	queryJobsResp   []JobStatusResponse
+	queryJobsTotal  int
+	queryJobsErr    error
+	retryOK         bool
+	retryErr        error
+	dlqOK           bool
+	dlqErr          error
+	dlqCalled       bool
+	dlqReason       string
+	statsCounts     StatsCounts
+	statsErr        error
+	dlqEntries      []DLQEntry
+	dlqTotal        int
 	getDLQEntryResp DLQEntry
 	getDLQEntryErr  error
-	replayErr     error
+	replayErr       error
 }
 
 func (f fakeStore) Ping(ctx context.Context) error {

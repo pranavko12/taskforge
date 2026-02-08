@@ -6,11 +6,11 @@ import (
 
 	"github.com/pranavko12/taskforge/internal/config"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
 func Init(ctx context.Context, cfg config.Config, serviceName string) (func(context.Context) error, error) {
@@ -30,7 +30,7 @@ func Init(ctx context.Context, cfg config.Config, serviceName string) (func(cont
 	}
 
 	res, err := resource.New(ctx,
-		resource.WithAttributes(semconv.ServiceName(serviceName)),
+		resource.WithAttributes(attribute.String("service.name", serviceName)),
 	)
 	if err != nil {
 		return nil, err
