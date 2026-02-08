@@ -105,7 +105,3 @@ func (f fakeStore) GetDLQEntry(ctx context.Context, jobID string) (DLQEntry, err
 func (f fakeStore) ReplayDLQ(ctx context.Context, jobID string) error {
 	return f.replayErr
 }
-
-func (f fakeStore) GetTraceparent(ctx context.Context, jobID string) (string, error) {
-	return "", nil
-}

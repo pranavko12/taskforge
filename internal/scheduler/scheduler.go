@@ -10,6 +10,7 @@ import (
 	"github.com/pranavko12/taskforge/internal/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var ErrMaxAttemptsExceeded = errors.New("max attempts exceeded")
@@ -63,8 +64,10 @@ func (s *Scheduler) ScheduleRetry(ctx context.Context, jobID string, now time.Ti
 	spanCtx := telemetry.ContextWithTraceparent(job.Traceparent)
 	tracer := otel.Tracer("taskforge/scheduler")
 	spanCtx, span := tracer.Start(spanCtx, "schedule_retry",
-		attribute.String("job_id", jobID),
-		attribute.String("queue", s.queueName),
+		trace.WithAttributes(
+			attribute.String("job_id", jobID),
+			attribute.String("queue", s.queueName),
+		),
 	)
 	defer span.End()
 
