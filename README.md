@@ -42,6 +42,8 @@ Common:
 - `UI_DIR` (default `./internal/api/ui`)
 - `WORKER_CONCURRENCY` (default `10`)
 - `RATE_LIMIT_PER_SEC` (default `0`, disabled)
+- `TRACING_ENABLED` (default `false`)
+- `TRACING_EXPORTER` (stdout|none, default `stdout`)
 
 ---
 
@@ -60,6 +62,18 @@ Core metrics:
 - `taskforge_worker_utilization{queue}`
 - `taskforge_worker_concurrency_throttled_total{queue}`
 - `taskforge_worker_rate_throttled_total{queue}`
+
+---
+
+## Tracing
+
+OpenTelemetry tracing is a thin slice and disabled by default. When enabled, trace context is propagated from API → scheduler → worker via `traceparent`.
+
+Config:
+- `TRACING_ENABLED=true`
+- `TRACING_EXPORTER=stdout` (writes spans to stdout)
+
+Logs include `trace_id` when tracing is enabled. Spans include `job_id` and `queue` attributes.
 
 ---
 
