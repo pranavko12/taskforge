@@ -47,7 +47,7 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`taskforge-cli
+	fmt.Print(`taskforge-cli
 
 Usage:
   taskforge-cli <command> [flags]
