@@ -183,6 +183,10 @@ func (s *Server) jobsSubroutes(w http.ResponseWriter, r *http.Request) {
 			// Implemented in jobs_route.go
 			s.dlqJob(w, r, id)
 			return
+		case "cancel":
+			// Implemented in jobs_route.go
+			s.cancelJob(w, r, id)
+			return
 		default:
 			writeAPIError(w, http.StatusNotFound, "not_found", "unknown action", nil)
 			return
