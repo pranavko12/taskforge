@@ -81,7 +81,10 @@ func cmdEnqueue(args []string) {
 	payloadFile := fs.String("payload-file", "", "Path to JSON payload file")
 	maxRetries := fs.Int("max-retries", 0, "Max retries (optional)")
 	maxAttempts := fs.Int("max-attempts", 0, "Max attempts (optional)")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 
 	if *jobType == "" || *idempotencyKey == "" {
 		fmt.Fprintln(os.Stderr, "job-type and idempotency-key are required")
@@ -125,7 +128,10 @@ func cmdStatus(args []string) {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	api := apiBase(fs)
 	jobID := fs.String("id", "", "Job ID")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	if *jobID == "" {
 		fmt.Fprintln(os.Stderr, "id is required")
 		fs.Usage()
@@ -145,7 +151,10 @@ func cmdCancel(args []string) {
 	api := apiBase(fs)
 	jobID := fs.String("id", "", "Job ID")
 	reason := fs.String("reason", "canceled", "Cancel reason")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	if *jobID == "" {
 		fmt.Fprintln(os.Stderr, "id is required")
 		fs.Usage()
@@ -166,7 +175,10 @@ func cmdDLQList(args []string) {
 	api := apiBase(fs)
 	limit := fs.Int("limit", 50, "Limit")
 	offset := fs.Int("offset", 0, "Offset")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 
 	url := fmt.Sprintf("%s/dlq?limit=%d&offset=%d", *api, *limit, *offset)
 	resp, err := httpGet(url)
@@ -181,7 +193,10 @@ func cmdDLQReplay(args []string) {
 	fs := flag.NewFlagSet("dlq-replay", flag.ExitOnError)
 	api := apiBase(fs)
 	jobID := fs.String("id", "", "Job ID")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	if *jobID == "" {
 		fmt.Fprintln(os.Stderr, "id is required")
 		fs.Usage()
