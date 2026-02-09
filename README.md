@@ -17,6 +17,7 @@ This project is built to demonstrate real-world backend system design principles
 - GET `/jobs/{id}`
 - POST `/jobs/{id}/retry`
 - POST `/jobs/{id}/dlq` (optional body: `{ "reason": "..." }`)
+- POST `/jobs/{id}/cancel` (optional body: `{ "reason": "..." }`)
 - GET `/dlq`
 - GET `/dlq/{id}`
 - POST `/dlq/{id}/replay`
@@ -74,6 +75,19 @@ Config:
 - `TRACING_EXPORTER=stdout` (writes spans to stdout)
 
 Logs include `trace_id` when tracing is enabled. Spans include `job_id` and `queue` attributes.
+
+---
+
+## CLI
+
+Examples:
+```
+taskforge-cli enqueue --job-type email --idempotency-key abc123 --payload '{"to":"a@b.com"}'
+taskforge-cli status --id 7b5b4f8e-2a7d-4e6f-9d5b-3a6b7f9a0c12
+taskforge-cli cancel --id 7b5b4f8e-2a7d-4e6f-9d5b-3a6b7f9a0c12 --reason "user requested"
+taskforge-cli dlq-list --limit 20
+taskforge-cli dlq-replay --id 7b5b4f8e-2a7d-4e6f-9d5b-3a6b7f9a0c12
+```
 
 ---
 
