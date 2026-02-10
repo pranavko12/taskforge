@@ -1,8 +1,6 @@
-# TaskForge – Distributed Job Queue & Scheduler
+# TaskForge - Distributed Job Queue & Scheduler
 
-TaskForge is a fault-tolerant distributed job queue and scheduler designed to execute asynchronous tasks reliably at scale. The system guarantees at-least-once delivery semantics, supports retries with exponential backoff, handles worker failures gracefully, and scales horizontally through stateless workers.
-
-This project is built to demonstrate real-world backend system design principles, including reliability, concurrency, observability, and performance measurement.
+TaskForge is a fault-tolerant distributed job queue and scheduler designed to execute asynchronous tasks reliably at scale. The system targets at-least-once delivery, retries with exponential backoff, worker leases with visibility timeouts, and full observability via logs, metrics, and tracing.
 
 ---
 
@@ -40,11 +38,44 @@ Common:
 - `REDIS_DB` (default `0`)
 - `REDIS_PASSWORD` (default empty)
 - `LOG_LEVEL` (debug|info|warn|error, default `info`)
-- `UI_DIR` (default `./internal/api/ui`)
 - `WORKER_CONCURRENCY` (default `10`)
 - `RATE_LIMIT_PER_SEC` (default `0`, disabled)
 - `TRACING_ENABLED` (default `false`)
 - `TRACING_EXPORTER` (stdout|none, default `stdout`)
+
+Config is validated at startup and fails fast with a readable error if invalid.
+
+---
+
+## Logging and Request IDs
+
+- Structured JSON logging with request metadata (method, path, status, latency).
+- `X-Request-ID` is generated if missing and returned on every response.
+
+---
+
+## Job Lifecycle and Reliability
+
+State machine is enforced in the database and code.
+
+Core behaviors:
+- Idempotency keys on job creation (reused keys return existing job).
+- Retries with exponential backoff and optional jitter.
+- Scheduler computes `next_run_at` deterministically (seeded jitter for tests).
+- Worker leases with visibility timeouts and heartbeat-based renewal.
+- Concurrency limits and optional rate limiting per queue.
+
+---
+
+## Dead-Letter Queue (DLQ)
+
+- Terminal failures move jobs into DLQ with a reason.
+- Replay re-enqueues the job and resets attempt counters.
+
+API:
+- GET `/dlq`
+- GET `/dlq/{id}`
+- POST `/dlq/{id}/replay`
 
 ---
 
@@ -68,7 +99,7 @@ Core metrics:
 
 ## Tracing
 
-OpenTelemetry tracing is a thin slice and disabled by default. When enabled, trace context is propagated from API → scheduler → worker via `traceparent`.
+OpenTelemetry tracing is a thin slice and disabled by default. When enabled, trace context is propagated from API -> scheduler -> worker via `traceparent`.
 
 Config:
 - `TRACING_ENABLED=true`
@@ -79,6 +110,8 @@ Logs include `trace_id` when tracing is enabled. Spans include `job_id` and `que
 ---
 
 ## CLI
+
+Build or run via `go run ./cmd/cli`.
 
 Examples:
 ```
@@ -98,11 +131,11 @@ Run end-to-end tests with Docker:
 bash scripts/integration-test.sh
 ```
 
+This spins up Postgres and Redis via docker-compose and runs an enqueue -> execute -> status flow.
+
 ---
 
 ## Architecture Overview
-
-TaskForge is composed of the following core components:
 
 ### API Service
 - Accepts job submissions via REST endpoints
@@ -111,31 +144,21 @@ TaskForge is composed of the following core components:
 - Publishes jobs to Redis queues for execution
 
 ### Scheduler
-- Pulls pending jobs from Redis
-- Assigns jobs to workers
-- Enforces visibility timeouts
-- Re-queues jobs when workers fail or exceed execution deadlines
+- Computes `next_run_at` for retries
+- Enforces retry policies and transitions jobs
+- Handles visibility timeouts and re-queues expired leases
 
 ### Worker Pool
-- Stateless workers with configurable concurrency
-- Execute jobs pulled from Redis queues
-- Use heartbeat-based liveness reporting
-- Support idempotent execution to prevent duplicate processing
+- Stateless workers with configurable concurrency and rate limiting
+- Lease-based execution with heartbeats
+- Emits metrics for throttling and utilization
 
 ### Persistent Store (PostgreSQL)
-- Stores job metadata and lifecycle state
-- Tracks retry counts and timestamps
-- Enables crash recovery and auditing
+- Stores job metadata and lifecycle state machine
+- Tracks attempts, retry policy, and timing
+- Stores DLQ entries with failure reasons
 
 ### Redis Layer
 - Primary job queues
-- Distributed locks
-- Rate limiting
-- Dead-letter queue for unrecoverable jobs
-
----
-
-## Job Lifecycle
-
-Each job follows a strict lifecycle:
+- Queue depth for metrics
 
