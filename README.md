@@ -91,6 +91,15 @@ taskforge-cli dlq-replay --id 7b5b4f8e-2a7d-4e6f-9d5b-3a6b7f9a0c12
 
 ---
 
+## Integration Tests
+
+Run end-to-end tests with Docker:
+```
+bash scripts/integration-test.sh
+```
+
+---
+
 ## Architecture Overview
 
 TaskForge is composed of the following core components:
