@@ -17,8 +17,8 @@ trap cleanup EXIT
 
 echo "Waiting for services..."
 for i in {1..40}; do
-  if docker compose -f "$COMPOSE_FILE" ps --status running | grep -q postgres && \
-     docker compose -f "$COMPOSE_FILE" ps --status running | grep -q redis; then
+  if docker compose -f "$COMPOSE_FILE" exec -T postgres pg_isready -U taskforge -d taskforge >/dev/null 2>&1 && \
+     docker compose -f "$COMPOSE_FILE" exec -T redis redis-cli ping | grep -q PONG; then
     break
   fi
   sleep 2
