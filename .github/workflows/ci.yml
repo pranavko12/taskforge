@@ -28,6 +28,20 @@ jobs:
       - name: Test
         run: go test ./...
 
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache: true
+
+      - name: Integration test
+        run: bash scripts/integration-test.sh
+
   lint:
     runs-on: ubuntu-latest
     steps:
