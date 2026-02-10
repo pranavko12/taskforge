@@ -153,11 +153,45 @@ func applyMigrations(ctx context.Context, pool *pgxpool.Pool, dir string) error 
 		if err != nil {
 			return err
 		}
-		if _, err := pool.Exec(ctx, string(sqlBytes)); err != nil {
-			return fmt.Errorf("apply %s: %w", file, err)
+		stmts := splitSQLStatements(string(sqlBytes))
+		for _, stmt := range stmts {
+			if _, err := pool.Exec(ctx, stmt); err != nil {
+				return fmt.Errorf("apply %s: %w", file, err)
+			}
 		}
 	}
 	return nil
+}
+
+func splitSQLStatements(sqlText string) []string {
+	var statements []string
+	var buf strings.Builder
+	inDollar := false
+
+	for i := 0; i < len(sqlText); i++ {
+		ch := sqlText[i]
+		if ch == '$' && i+1 < len(sqlText) && sqlText[i+1] == '$' {
+			inDollar = !inDollar
+			buf.WriteByte(ch)
+			buf.WriteByte(sqlText[i+1])
+			i++
+			continue
+		}
+		if ch == ';' && !inDollar {
+			stmt := strings.TrimSpace(buf.String())
+			if stmt != "" {
+				statements = append(statements, stmt)
+			}
+			buf.Reset()
+			continue
+		}
+		buf.WriteByte(ch)
+	}
+	stmt := strings.TrimSpace(buf.String())
+	if stmt != "" {
+		statements = append(statements, stmt)
+	}
+	return statements
 }
 
 func httpGet(url string) ([]byte, error) {
