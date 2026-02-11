@@ -220,7 +220,8 @@ func (s *Server) dlq(w http.ResponseWriter, r *http.Request) {
 
 	items, total, err := s.store.ListDLQ(ctx, limit, offset)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to list dlq", nil)
+		status, code, message := mapDomainError(err, http.StatusInternalServerError, "internal_error", "failed to list dlq")
+		writeAPIError(w, status, code, message, nil)
 		return
 	}
 
@@ -257,20 +258,14 @@ func (s *Server) dlqSubroutes(w http.ResponseWriter, r *http.Request) {
 
 		entry, err := s.store.GetDLQEntry(ctx, id)
 		if err != nil {
-			if errors.Is(err, errNotFound) {
-				writeAPIError(w, http.StatusNotFound, "not_found", "not found", nil)
-				return
-			}
-			writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to fetch dlq entry", nil)
+			status, code, message := mapDomainError(err, http.StatusInternalServerError, "internal_error", "failed to fetch dlq entry")
+			writeAPIError(w, status, code, message, nil)
 			return
 		}
 		job, err := s.store.GetJob(ctx, id)
 		if err != nil {
-			if errors.Is(err, errNotFound) {
-				writeAPIError(w, http.StatusNotFound, "not_found", "not found", nil)
-				return
-			}
-			writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to fetch job", nil)
+			status, code, message := mapDomainError(err, http.StatusInternalServerError, "internal_error", "failed to fetch job")
+			writeAPIError(w, status, code, message, nil)
 			return
 		}
 		writeJSON(w, http.StatusOK, DLQInspectResponse{Entry: entry, Job: job})
@@ -285,11 +280,8 @@ func (s *Server) dlqSubroutes(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
 		if err := s.store.ReplayDLQ(ctx, id); err != nil {
-			if errors.Is(err, errNotFound) {
-				writeAPIError(w, http.StatusNotFound, "not_found", "not found", nil)
-				return
-			}
-			writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to replay job", nil)
+			status, code, message := mapDomainError(err, http.StatusInternalServerError, "internal_error", "failed to replay job")
+			writeAPIError(w, status, code, message, nil)
 			return
 		}
 		if err := s.queue.Enqueue(ctx, s.queueName, id); err != nil {
@@ -367,11 +359,8 @@ func (s *Server) getJobByID(w http.ResponseWriter, r *http.Request, id string) {
 
 	resp, err := s.store.GetJob(ctx, id)
 	if err != nil {
-		if errors.Is(err, errNotFound) {
-			writeAPIError(w, http.StatusNotFound, "not_found", "not found", nil)
-			return
-		}
-		writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to fetch job", nil)
+		status, code, message := mapDomainError(err, http.StatusInternalServerError, "internal_error", "failed to fetch job")
+		writeAPIError(w, status, code, message, nil)
 		return
 	}
 

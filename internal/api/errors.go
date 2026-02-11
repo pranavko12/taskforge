@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 )
 
@@ -19,4 +20,15 @@ func writeAPIError(w http.ResponseWriter, status int, code, message string, deta
 		Message: message,
 		Details: details,
 	})
+}
+
+func mapDomainError(err error, fallbackStatus int, fallbackCode, fallbackMessage string) (int, string, string) {
+	switch {
+	case errors.Is(err, errNotFound):
+		return http.StatusNotFound, "not_found", "not found"
+	case errors.Is(err, errInvalidTransition):
+		return http.StatusConflict, "invalid_state_transition", "invalid state transition"
+	default:
+		return fallbackStatus, fallbackCode, fallbackMessage
+	}
 }

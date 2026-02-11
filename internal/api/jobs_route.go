@@ -20,11 +20,8 @@ func (s *Server) retryJob(w http.ResponseWriter, r *http.Request, jobID string) 
 
 	ok, err := s.store.RetryJob(ctx, jobID)
 	if err != nil {
-		if errors.Is(err, errInvalidTransition) {
-			writeAPIError(w, http.StatusConflict, "invalid_state_transition", "invalid state transition", nil)
-			return
-		}
-		writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to retry job", nil)
+		status, code, message := mapDomainError(err, http.StatusInternalServerError, "internal_error", "failed to retry job")
+		writeAPIError(w, status, code, message, nil)
 		return
 	}
 	if !ok {
@@ -58,11 +55,8 @@ func (s *Server) dlqJob(w http.ResponseWriter, r *http.Request, jobID string) {
 
 	ok, err := s.store.DLQJob(ctx, jobID, req.Reason)
 	if err != nil {
-		if errors.Is(err, errInvalidTransition) {
-			writeAPIError(w, http.StatusConflict, "invalid_state_transition", "invalid state transition", nil)
-			return
-		}
-		writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to dlq job", nil)
+		status, code, message := mapDomainError(err, http.StatusInternalServerError, "internal_error", "failed to dlq job")
+		writeAPIError(w, status, code, message, nil)
 		return
 	}
 	if !ok {
@@ -94,11 +88,8 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, jobID string)
 
 	ok, err := s.store.DLQJob(ctx, jobID, req.Reason)
 	if err != nil {
-		if errors.Is(err, errInvalidTransition) {
-			writeAPIError(w, http.StatusConflict, "invalid_state_transition", "invalid state transition", nil)
-			return
-		}
-		writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to cancel job", nil)
+		status, code, message := mapDomainError(err, http.StatusInternalServerError, "internal_error", "failed to cancel job")
+		writeAPIError(w, status, code, message, nil)
 		return
 	}
 	if !ok {
