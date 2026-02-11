@@ -64,7 +64,7 @@ func NewServer(cfg config.Config, store Store, queue Queue, deps DependencyCheck
 
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/readyz", s.readyz)
-	mux.HandleFunc("/health", s.readyz)
+	mux.HandleFunc("/health", s.healthz)
 
 	mux.HandleFunc("/jobs", s.jobs)
 	mux.HandleFunc("/jobs/", s.jobsSubroutes)

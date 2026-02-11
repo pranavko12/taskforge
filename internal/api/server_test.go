@@ -27,6 +27,19 @@ func TestHealthzAlwaysOK(t *testing.T) {
 	}
 }
 
+func TestHealthAliasAlwaysOK(t *testing.T) {
+	q := &fakeQueue{}
+	s := newTestServer(&fakeStore{pingErr: errTest}, q)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
 func TestReadyzDependsOnDeps(t *testing.T) {
 	q := &fakeQueue{}
 	s := newTestServer(&fakeStore{pingErr: errTest}, q)
