@@ -74,6 +74,50 @@ func TestErrorShapeInvalidJSON(t *testing.T) {
 	assertAPIError(t, rec, http.StatusBadRequest, "invalid_json")
 }
 
+func TestErrorShapeInvalidJSONHasDetails(t *testing.T) {
+	q := &fakeQueue{}
+	s := newTestServer(&fakeStore{}, q)
+	req := httptest.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString("{invalid"))
+	rec := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rec, req)
+
+	payload := assertAPIError(t, rec, http.StatusBadRequest, "invalid_json")
+	if payload.Details == nil {
+		t.Fatal("expected details for invalid_json error")
+	}
+}
+
+func TestErrorShapeRetryInvalidStateTransition(t *testing.T) {
+	store := fakeStore{retryErr: errInvalidTransition}
+	q := &fakeQueue{}
+	s := newTestServer(&store, q)
+	req := httptest.NewRequest(http.MethodPost, "/jobs/job-1/retry", nil)
+	rec := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rec, req)
+
+	payload := assertAPIError(t, rec, http.StatusConflict, "invalid_state_transition")
+	if payload.Message == "" {
+		t.Fatal("expected non-empty message")
+	}
+}
+
+func TestErrorShapeReadyzDependencyNotReady(t *testing.T) {
+	store := fakeStore{pingErr: errTest}
+	q := &fakeQueue{}
+	s := newTestServer(&store, q)
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rec, req)
+
+	payload := assertAPIError(t, rec, http.StatusServiceUnavailable, "dependency_not_ready")
+	if payload.Message == "" {
+		t.Fatal("expected non-empty message")
+	}
+}
+
 func TestIdempotencyReturnsExistingJob(t *testing.T) {
 	store := fakeStore{
 		insertErr:    errUnique,
@@ -158,10 +202,13 @@ func testConfig() config.Config {
 	}
 }
 
-func assertAPIError(t *testing.T, rec *httptest.ResponseRecorder, status int, code string) {
+func assertAPIError(t *testing.T, rec *httptest.ResponseRecorder, status int, code string) APIError {
 	t.Helper()
 	if rec.Code != status {
 		t.Fatalf("expected %d, got %d", status, rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("expected Content-Type application/json, got %q", ct)
 	}
 	var payload APIError
 	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
@@ -170,6 +217,10 @@ func assertAPIError(t *testing.T, rec *httptest.ResponseRecorder, status int, co
 	if payload.Code != code {
 		t.Fatalf("expected code %q, got %q", code, payload.Code)
 	}
+	if payload.Message == "" {
+		t.Fatal("expected non-empty message")
+	}
+	return payload
 }
 
 var errTest = errors.New("test error")
