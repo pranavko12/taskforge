@@ -26,6 +26,46 @@ Each response includes an `X-Request-ID` header for tracing.
 
 ---
 
+## curl Examples
+
+Health and readiness:
+```bash
+curl -i http://localhost:8080/healthz
+curl -i http://localhost:8080/readyz
+```
+
+Enqueue a job:
+```bash
+curl -sS -X POST http://localhost:8080/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"jobType":"email","payload":{"to":"a@b.com"},"idempotencyKey":"abc-123"}'
+```
+
+Get job status:
+```bash
+curl -sS http://localhost:8080/jobs/<job-id>
+```
+
+Cancel a job:
+```bash
+curl -sS -X POST http://localhost:8080/jobs/<job-id>/cancel \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"user requested"}'
+```
+
+List DLQ and replay:
+```bash
+curl -sS "http://localhost:8080/dlq?limit=20&offset=0"
+curl -sS -X POST http://localhost:8080/dlq/<job-id>/replay
+```
+
+Prometheus metrics:
+```bash
+curl -sS http://localhost:8080/metrics
+```
+
+---
+
 ## Configuration
 
 Required:
@@ -161,4 +201,3 @@ This spins up Postgres and Redis via docker-compose and runs an enqueue -> execu
 ### Redis Layer
 - Primary job queues
 - Queue depth for metrics
-
