@@ -31,6 +31,25 @@ func (e *Error) Error() string {
 }
 
 func Load() (Config, error) {
+	var issues []string
+
+	redisDB, err := getEnvInt("REDIS_DB", 0)
+	if err != nil {
+		issues = append(issues, err.Error())
+	}
+	workerConcurrency, err := getEnvInt("WORKER_CONCURRENCY", 10)
+	if err != nil {
+		issues = append(issues, err.Error())
+	}
+	rateLimitPerSec, err := getEnvInt("RATE_LIMIT_PER_SEC", 0)
+	if err != nil {
+		issues = append(issues, err.Error())
+	}
+	tracingEnabled, err := getEnvBool("TRACING_ENABLED", false)
+	if err != nil {
+		issues = append(issues, err.Error())
+	}
+
 	cfg := Config{
 		HTTPAddr:          getEnv("HTTP_ADDR", ":8080"),
 		QueueName:         getEnv("QUEUE_NAME", "jobs:ready"),
@@ -39,14 +58,13 @@ func Load() (Config, error) {
 		PostgresDSN:       strings.TrimSpace(os.Getenv("POSTGRES_DSN")),
 		RedisAddr:         getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPassword:     getEnv("REDIS_PASSWORD", ""),
-		RedisDB:           getEnvInt("REDIS_DB", 0),
-		WorkerConcurrency: getEnvInt("WORKER_CONCURRENCY", 10),
-		RateLimitPerSec:   getEnvInt("RATE_LIMIT_PER_SEC", 0),
-		TracingEnabled:    getEnvBool("TRACING_ENABLED", false),
+		RedisDB:           redisDB,
+		WorkerConcurrency: workerConcurrency,
+		RateLimitPerSec:   rateLimitPerSec,
+		TracingEnabled:    tracingEnabled,
 		TracingExporter:   strings.ToLower(getEnv("TRACING_EXPORTER", "stdout")),
 	}
 
-	var issues []string
 	if cfg.PostgresDSN == "" {
 		issues = append(issues, "POSTGRES_DSN is required")
 	}
@@ -89,29 +107,29 @@ func getEnv(key, fallback string) string {
 	return v
 }
 
-func getEnvInt(key string, fallback int) int {
+func getEnvInt(key string, fallback int) (int, error) {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
-		return fallback
+		return fallback, nil
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
-		return fallback
+		return 0, fmt.Errorf("%s must be a valid integer (got %q)", key, v)
 	}
-	return n
+	return n, nil
 }
 
-func getEnvBool(key string, fallback bool) bool {
+func getEnvBool(key string, fallback bool) (bool, error) {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
-		return fallback
+		return fallback, nil
 	}
 	switch strings.ToLower(v) {
 	case "1", "true", "yes", "y", "on":
-		return true
+		return true, nil
 	case "0", "false", "no", "n", "off":
-		return false
+		return false, nil
 	default:
-		return fallback
+		return false, fmt.Errorf("%s must be a valid boolean (true/false, 1/0, yes/no; got %q)", key, v)
 	}
 }
