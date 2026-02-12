@@ -26,10 +26,6 @@ func (s *PostgresStore) Ping(ctx context.Context) error {
 }
 
 func (s *PostgresStore) InsertJob(ctx context.Context, jobID string, req SubmitJobRequest, traceparent string) error {
-	return s.CreateJob(ctx, jobID, req, traceparent)
-}
-
-func (s *PostgresStore) CreateJob(ctx context.Context, jobID string, req SubmitJobRequest, traceparent string) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO jobs (
 			job_id, job_type, payload, idempotency_key, state, max_retries,
@@ -314,10 +310,6 @@ func (s *PostgresStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatus
 }
 
 func (s *PostgresStore) RetryJob(ctx context.Context, jobID string) (bool, error) {
-	return s.TransitionJob(ctx, jobID, StatePending, "")
-}
-
-func (s *PostgresStore) TransitionJob(ctx context.Context, jobID, toState, lastError string) (bool, error) {
 	var state string
 	if err := s.pool.QueryRow(ctx, `SELECT state FROM jobs WHERE job_id = $1`, jobID).Scan(&state); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -325,14 +317,14 @@ func (s *PostgresStore) TransitionJob(ctx context.Context, jobID, toState, lastE
 		}
 		return false, err
 	}
-	if !isAllowedTransition(state, toState) {
+	if state != StateFailed && state != StateRetrying && state != StateDLQ && state != StateDead {
 		return false, errInvalidTransition
 	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE jobs
-		SET state = $1, last_error = $2, updated_at = NOW()
-		WHERE job_id = $3
-	`, toState, lastError, jobID)
+		SET state = $1, last_error = '', updated_at = NOW()
+		WHERE job_id = $2
+	`, StatePending, jobID)
 	if err != nil {
 		return false, err
 	}
@@ -340,11 +332,25 @@ func (s *PostgresStore) TransitionJob(ctx context.Context, jobID, toState, lastE
 }
 
 func (s *PostgresStore) DLQJob(ctx context.Context, jobID string, reason string) (bool, error) {
-	tagOK, err := s.TransitionJob(ctx, jobID, StateDLQ, "")
+	var state string
+	if err := s.pool.QueryRow(ctx, `SELECT state FROM jobs WHERE job_id = $1`, jobID).Scan(&state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, errNotFound
+		}
+		return false, err
+	}
+	if state != StateFailed && state != StateRetrying && state != StateInProgress {
+		return false, errInvalidTransition
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE jobs
+		SET state = $1, updated_at = NOW()
+		WHERE job_id = $2
+	`, StateDLQ, jobID)
 	if err != nil {
 		return false, err
 	}
-	if tagOK {
+	if tag.RowsAffected() > 0 {
 		if reason == "" {
 			reason = "manual dlq"
 		}
@@ -352,7 +358,7 @@ func (s *PostgresStore) DLQJob(ctx context.Context, jobID string, reason string)
 			return false, err
 		}
 	}
-	return tagOK, nil
+	return tag.RowsAffected() > 0, nil
 }
 
 func (s *PostgresStore) Stats(ctx context.Context) (StatsCounts, error) {
