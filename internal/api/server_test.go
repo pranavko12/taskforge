@@ -155,6 +155,47 @@ func TestIdempotencyReturnsExistingJob(t *testing.T) {
 	if resp.JobID != "existing" {
 		t.Fatalf("expected existing job id, got %q", resp.JobID)
 	}
+	if store.lastGetByKeyQ != testConfig().QueueName {
+		t.Fatalf("expected queue-scoped idempotency lookup on %q, got %q", testConfig().QueueName, store.lastGetByKeyQ)
+	}
+}
+
+func TestDuplicateSubmissionsReturnExistingJob(t *testing.T) {
+	store := fakeStore{
+		idemSeen: make(map[string]string),
+	}
+	q := &fakeQueue{}
+	s := newTestServer(&store, q)
+
+	body := `{"jobType":"demo","payload":{"a":1},"idempotencyKey":"dup-key"}`
+
+	req1 := httptest.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString(body))
+	rec1 := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusAccepted {
+		t.Fatalf("first submission expected 202, got %d", rec1.Code)
+	}
+	var resp1 SubmitJobResponse
+	if err := json.NewDecoder(rec1.Body).Decode(&resp1); err != nil {
+		t.Fatalf("decode first response: %v", err)
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString(body))
+	rec2 := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second submission expected 200, got %d", rec2.Code)
+	}
+	var resp2 SubmitJobResponse
+	if err := json.NewDecoder(rec2.Body).Decode(&resp2); err != nil {
+		t.Fatalf("decode second response: %v", err)
+	}
+	if resp2.JobID != resp1.JobID {
+		t.Fatalf("expected same job id on duplicate submission, got %q and %q", resp1.JobID, resp2.JobID)
+	}
+	if store.lastGetByKeyQ != testConfig().QueueName {
+		t.Fatalf("expected queue-scoped idempotency lookup on %q, got %q", testConfig().QueueName, store.lastGetByKeyQ)
+	}
 }
 
 func TestJobsListOK(t *testing.T) {
@@ -242,10 +283,13 @@ var errUnique = errors.New("duplicate key value violates unique constraint")
 type fakeStore struct {
 	pingErr         error
 	insertErr       error
+	insertCount     int
+	idemSeen        map[string]string
 	getJobResp      JobStatusResponse
 	getJobErr       error
 	getByKeyResp    JobStatusResponse
 	getByKeyErr     error
+	lastGetByKeyQ   string
 	queryJobsResp   []JobStatusResponse
 	queryJobsTotal  int
 	queryJobsErr    error
@@ -268,7 +312,15 @@ func (f fakeStore) Ping(ctx context.Context) error {
 	return f.pingErr
 }
 
-func (f fakeStore) InsertJob(ctx context.Context, jobID string, req SubmitJobRequest, traceparent string) error {
+func (f *fakeStore) InsertJob(ctx context.Context, jobID string, req SubmitJobRequest, traceparent string, queueName string) error {
+	f.insertCount++
+	if f.idemSeen != nil {
+		if existingID, ok := f.idemSeen[queueName+"|"+req.IdempotencyKey]; ok {
+			f.getByKeyResp = JobStatusResponse{JobID: existingID}
+			return errUnique
+		}
+		f.idemSeen[queueName+"|"+req.IdempotencyKey] = jobID
+	}
 	return f.insertErr
 }
 
@@ -279,7 +331,8 @@ func (f fakeStore) GetJob(ctx context.Context, jobID string) (JobStatusResponse,
 	return f.getJobResp, nil
 }
 
-func (f fakeStore) GetJobByIdempotencyKey(ctx context.Context, key string) (JobStatusResponse, error) {
+func (f *fakeStore) GetJobByIdempotencyKey(ctx context.Context, key string, queueName string) (JobStatusResponse, error) {
+	f.lastGetByKeyQ = queueName
 	if f.getByKeyErr != nil {
 		return JobStatusResponse{}, f.getByKeyErr
 	}

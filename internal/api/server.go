@@ -331,9 +331,9 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 	if span := trace.SpanFromContext(r.Context()); span != nil {
 		span.SetAttributes(attribute.String("job_id", jobID), attribute.String("queue", s.queueName))
 	}
-	if err := s.store.InsertJob(ctx, jobID, req, traceparent); err != nil {
+	if err := s.store.InsertJob(ctx, jobID, req, traceparent, s.queueName); err != nil {
 		if isUniqueViolation(err) {
-			existing, getErr := s.store.GetJobByIdempotencyKey(ctx, req.IdempotencyKey)
+			existing, getErr := s.store.GetJobByIdempotencyKey(ctx, req.IdempotencyKey, s.queueName)
 			if getErr != nil {
 				writeAPIError(w, http.StatusInternalServerError, "internal_error", "failed to load existing job", nil)
 				return
@@ -379,7 +379,9 @@ func isUniqueViolation(err error) bool {
 		return pgErr.Code == "23505"
 	}
 	msg := err.Error()
-	return strings.Contains(msg, "duplicate key value") || strings.Contains(msg, "jobs_idempotency_key_uq")
+	return strings.Contains(msg, "duplicate key value") ||
+		strings.Contains(msg, "jobs_idempotency_key_uq") ||
+		strings.Contains(msg, "jobs_queue_idempotency_key_uq")
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
