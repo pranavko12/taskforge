@@ -24,6 +24,11 @@ TaskForge is a fault-tolerant distributed job queue and scheduler designed to ex
 All error responses use a consistent JSON shape: `{ "code": "...", "message": "...", "details": ... }`.
 Each response includes an `X-Request-ID` header for tracing.
 
+`GET /jobs` pagination:
+- Query params: `limit` (default `50`, hard max `200`), `offset` (default `0`).
+- Values above max are clamped; negative offsets are normalized to `0`.
+- `GET /jobs/{id}` is a single-resource lookup and is not paginated.
+
 ---
 
 ## curl Examples
