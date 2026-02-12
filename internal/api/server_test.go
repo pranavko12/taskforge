@@ -215,6 +215,29 @@ func TestJobsListOK(t *testing.T) {
 	}
 }
 
+func TestJobsListAppliesHardLimitAndOffsetNormalization(t *testing.T) {
+	store := fakeStore{
+		queryJobsResp:  []JobStatusResponse{},
+		queryJobsTotal: 0,
+	}
+	q := &fakeQueue{}
+	s := newTestServer(&store, q)
+	req := httptest.NewRequest(http.MethodGet, "/jobs?limit=9999&offset=-5", nil)
+	rec := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if store.lastQuery.Limit != maxListLimit {
+		t.Fatalf("expected clamped limit %d, got %d", maxListLimit, store.lastQuery.Limit)
+	}
+	if store.lastQuery.Offset != 0 {
+		t.Fatalf("expected normalized offset 0, got %d", store.lastQuery.Offset)
+	}
+}
+
 func TestGetJobNotFound(t *testing.T) {
 	store := fakeStore{getJobErr: errNotFound}
 	q := &fakeQueue{}
@@ -290,6 +313,7 @@ type fakeStore struct {
 	getByKeyResp    JobStatusResponse
 	getByKeyErr     error
 	lastGetByKeyQ   string
+	lastQuery       JobsQuery
 	queryJobsResp   []JobStatusResponse
 	queryJobsTotal  int
 	queryJobsErr    error
@@ -343,7 +367,8 @@ func (f fakeStore) GetTraceparent(ctx context.Context, jobID string) (string, er
 	return "", nil
 }
 
-func (f fakeStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatusResponse, int, error) {
+func (f *fakeStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatusResponse, int, error) {
+	f.lastQuery = q
 	if f.queryJobsErr != nil {
 		return nil, 0, f.queryJobsErr
 	}

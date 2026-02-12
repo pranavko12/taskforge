@@ -8,15 +8,20 @@ import (
 	"time"
 )
 
+const (
+	defaultListLimit = 50
+	maxListLimit     = 200
+)
+
 func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	qp := r.URL.Query()
 
-	limit := parseInt(qp.Get("limit"), 50)
+	limit := parseInt(qp.Get("limit"), defaultListLimit)
 	if limit <= 0 {
-		limit = 50
+		limit = defaultListLimit
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > maxListLimit {
+		limit = maxListLimit
 	}
 
 	offset := parseInt(qp.Get("offset"), 0)
