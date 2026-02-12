@@ -54,6 +54,7 @@ type JobsListResponse struct {
 type JobsQuery struct {
 	Limit   int
 	Offset  int
+	Queue   string
 	State   string
 	JobType string
 	Q       string

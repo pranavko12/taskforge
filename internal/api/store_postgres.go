@@ -240,6 +240,10 @@ func (s *PostgresStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatus
 		p := addArg(q.State)
 		whereParts = append(whereParts, "state = "+p)
 	}
+	if q.Queue != "" {
+		p := addArg(q.Queue)
+		whereParts = append(whereParts, "queue_name = "+p)
+	}
 	if q.JobType != "" {
 		p := addArg(q.JobType)
 		whereParts = append(whereParts, "job_type = "+p)

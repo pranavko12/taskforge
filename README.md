@@ -13,6 +13,7 @@ TaskForge is a fault-tolerant distributed job queue and scheduler designed to ex
 - POST `/jobs`
 - POST `/jobs` with an existing `idempotencyKey` returns the existing job id
 - GET `/jobs/{id}`
+- GET `/queues/{q}/jobs?status=...`
 - POST `/jobs/{id}/retry`
 - POST `/jobs/{id}/dlq` (optional body: `{ "reason": "..." }`)
 - POST `/jobs/{id}/cancel` (optional body: `{ "reason": "..." }`)
@@ -24,9 +25,10 @@ TaskForge is a fault-tolerant distributed job queue and scheduler designed to ex
 All error responses use a consistent JSON shape: `{ "code": "...", "message": "...", "details": ... }`.
 Each response includes an `X-Request-ID` header for tracing.
 
-`GET /jobs` pagination:
+`GET /jobs` and `GET /queues/{q}/jobs` pagination:
 - Query params: `limit` (default `50`, hard max `200`), `offset` (default `0`).
 - Values above max are clamped; negative offsets are normalized to `0`.
+- `GET /queues/{q}/jobs` supports `status` (mapped to lifecycle state filter).
 - `GET /jobs/{id}` is a single-resource lookup and is not paginated.
 
 ---
@@ -49,6 +51,11 @@ curl -sS -X POST http://localhost:8080/jobs \
 Get job status:
 ```bash
 curl -sS http://localhost:8080/jobs/<job-id>
+```
+
+List jobs for a queue/status:
+```bash
+curl -sS "http://localhost:8080/queues/jobs:ready/jobs?status=PENDING&limit=50&offset=0"
 ```
 
 Cancel a job:

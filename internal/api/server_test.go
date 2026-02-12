@@ -238,6 +238,35 @@ func TestJobsListAppliesHardLimitAndOffsetNormalization(t *testing.T) {
 	}
 }
 
+func TestQueueJobsListByStatusAppliesHardLimit(t *testing.T) {
+	store := fakeStore{
+		queryJobsResp:  []JobStatusResponse{},
+		queryJobsTotal: 0,
+	}
+	q := &fakeQueue{}
+	s := newTestServer(&store, q)
+	req := httptest.NewRequest(http.MethodGet, "/queues/priority/jobs?status=PENDING&limit=9999&offset=-9", nil)
+	rec := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if store.lastQuery.Queue != "priority" {
+		t.Fatalf("expected queue filter priority, got %q", store.lastQuery.Queue)
+	}
+	if store.lastQuery.State != "PENDING" {
+		t.Fatalf("expected status/state filter PENDING, got %q", store.lastQuery.State)
+	}
+	if store.lastQuery.Limit != maxListLimit {
+		t.Fatalf("expected clamped limit %d, got %d", maxListLimit, store.lastQuery.Limit)
+	}
+	if store.lastQuery.Offset != 0 {
+		t.Fatalf("expected normalized offset 0, got %d", store.lastQuery.Offset)
+	}
+}
+
 func TestGetJobNotFound(t *testing.T) {
 	store := fakeStore{getJobErr: errNotFound}
 	q := &fakeQueue{}
