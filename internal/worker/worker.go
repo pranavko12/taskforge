@@ -7,30 +7,30 @@ import (
 
 type Worker struct {
 	store      LeaseStore
-	owner      string
+	leaseID    string
 	leaseFor   time.Duration
 	renewEvery time.Duration
 }
 
-func New(store LeaseStore, owner string, leaseFor time.Duration) *Worker {
+func New(store LeaseStore, leaseID string, leaseFor time.Duration) *Worker {
 	return &Worker{
 		store:      store,
-		owner:      owner,
+		leaseID:    leaseID,
 		leaseFor:   leaseFor,
 		renewEvery: leaseFor / 2,
 	}
 }
 
 func (w *Worker) Acquire(ctx context.Context, jobID string, now time.Time) (bool, error) {
-	return w.store.AcquireLease(ctx, jobID, w.owner, now, w.leaseFor)
+	return w.store.AcquireLease(ctx, jobID, w.leaseID, now, w.leaseFor)
 }
 
 func (w *Worker) LeaseNext(ctx context.Context, queueName string, now time.Time) (string, bool, error) {
-	return w.store.LeaseNextJob(ctx, queueName, w.owner, now, w.leaseFor)
+	return w.store.LeaseNextJob(ctx, queueName, w.leaseID, now, w.leaseFor)
 }
 
-func (w *Worker) Renew(ctx context.Context, jobID string, now time.Time) (bool, error) {
-	return w.store.RenewLease(ctx, jobID, w.owner, now, w.leaseFor)
+func (w *Worker) Renew(ctx context.Context, jobID string) (bool, error) {
+	return w.store.RenewLease(ctx, jobID, w.leaseID, w.leaseFor)
 }
 
 // Heartbeat renews the lease until ctx is cancelled.
@@ -41,7 +41,7 @@ func (w *Worker) Heartbeat(ctx context.Context, jobID string) error {
 	for {
 		select {
 		case <-ticker.C:
-			if _, err := w.Renew(ctx, jobID, time.Now().UTC()); err != nil {
+			if _, err := w.Renew(ctx, jobID); err != nil {
 				return err
 			}
 		case <-ctx.Done():

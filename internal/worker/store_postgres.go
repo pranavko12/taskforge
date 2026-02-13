@@ -17,7 +17,7 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 	return &PostgresStore{pool: pool}
 }
 
-func (s *PostgresStore) LeaseNextJob(ctx context.Context, queueName string, owner string, now time.Time, leaseFor time.Duration) (string, bool, error) {
+func (s *PostgresStore) LeaseNextJob(ctx context.Context, queueName string, leaseID string, now time.Time, leaseFor time.Duration) (string, bool, error) {
 	var jobID string
 	err := s.pool.QueryRow(ctx, `
 		WITH candidate AS (
@@ -39,7 +39,7 @@ func (s *PostgresStore) LeaseNextJob(ctx context.Context, queueName string, owne
 		FROM candidate
 		WHERE j.job_id = candidate.job_id
 		RETURNING j.job_id
-	`, queueName, now, owner, now.Add(leaseFor)).Scan(&jobID)
+	`, queueName, now, leaseID, now.Add(leaseFor)).Scan(&jobID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", false, nil
@@ -67,7 +67,8 @@ func (s *PostgresStore) AcquireLease(ctx context.Context, jobID string, owner st
 	return tag.RowsAffected() == 1, nil
 }
 
-func (s *PostgresStore) RenewLease(ctx context.Context, jobID string, owner string, now time.Time, leaseFor time.Duration) (bool, error) {
+func (s *PostgresStore) RenewLease(ctx context.Context, jobID string, leaseID string, extendBy time.Duration) (bool, error) {
+	expiresAt := time.Now().UTC().Add(extendBy)
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE jobs
 		SET lease_expires_at = $1,
@@ -75,7 +76,7 @@ func (s *PostgresStore) RenewLease(ctx context.Context, jobID string, owner stri
 		WHERE job_id = $2
 			AND state = 'IN_PROGRESS'
 			AND lease_owner = $3
-	`, now.Add(leaseFor), jobID, owner)
+	`, expiresAt, jobID, leaseID)
 	if err != nil {
 		return false, err
 	}
