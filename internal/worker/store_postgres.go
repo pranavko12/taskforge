@@ -32,6 +32,7 @@ func (s *PostgresStore) LeaseNextJob(ctx context.Context, queueName string, leas
 		)
 		UPDATE jobs j
 		SET state = 'IN_PROGRESS',
+			attempt_count = attempt_count + 1,
 			lease_owner = $3,
 			lease_expires_at = $4,
 			started_at = COALESCE(started_at, $2),
@@ -53,6 +54,7 @@ func (s *PostgresStore) AcquireLease(ctx context.Context, jobID string, owner st
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE jobs
 		SET state = 'IN_PROGRESS',
+			attempt_count = attempt_count + 1,
 			lease_owner = $1,
 			lease_expires_at = $2,
 			started_at = COALESCE(started_at, NOW()),
@@ -77,6 +79,43 @@ func (s *PostgresStore) RenewLease(ctx context.Context, jobID string, leaseID st
 			AND state = 'IN_PROGRESS'
 			AND lease_owner = $3
 	`, expiresAt, jobID, leaseID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (s *PostgresStore) MarkJobSucceeded(ctx context.Context, jobID string, leaseID string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE jobs
+		SET state = 'COMPLETED',
+			lease_owner = NULL,
+			lease_expires_at = NULL,
+			last_error = '',
+			completed_at = NOW(),
+			updated_at = NOW()
+		WHERE job_id = $1
+			AND state = 'IN_PROGRESS'
+			AND lease_owner = $2
+	`, jobID, leaseID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (s *PostgresStore) MarkJobFailed(ctx context.Context, jobID string, leaseID string, lastError string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE jobs
+		SET state = 'FAILED',
+			lease_owner = NULL,
+			lease_expires_at = NULL,
+			last_error = $3,
+			updated_at = NOW()
+		WHERE job_id = $1
+			AND state = 'IN_PROGRESS'
+			AND lease_owner = $2
+	`, jobID, leaseID, lastError)
 	if err != nil {
 		return false, err
 	}
