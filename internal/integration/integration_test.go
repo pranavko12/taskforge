@@ -224,6 +224,11 @@ func getJobStatus(t *testing.T, baseURL, jobID string) api.JobStatusResponse {
 }
 
 func applyMigrations(ctx context.Context, pool *pgxpool.Pool, dir string) error {
+	// Reset schema between tests so each test can apply migrations from scratch.
+	if _, err := pool.Exec(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`); err != nil {
+		return fmt.Errorf("reset schema: %w", err)
+	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
