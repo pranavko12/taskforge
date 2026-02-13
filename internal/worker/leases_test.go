@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"sync/atomic"
 	"sync"
 	"testing"
 	"time"
@@ -161,6 +162,9 @@ type fakeLeaseStore struct {
 	state     string
 	owner     string
 	expiresAt time.Time
+	renewCount int64
+	succeededCount int
+	failedCount int
 }
 
 func newFakeLeaseStore() *fakeLeaseStore {
@@ -212,6 +216,35 @@ func (s *fakeLeaseStore) RenewLease(ctx context.Context, jobID string, leaseID s
 		return false, nil
 	}
 	s.expiresAt = time.Now().UTC().Add(extendBy)
+	atomic.AddInt64(&s.renewCount, 1)
+	return true, nil
+}
+
+func (s *fakeLeaseStore) MarkJobSucceeded(ctx context.Context, jobID string, leaseID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.jobID != jobID || s.owner != leaseID || s.state != "IN_PROGRESS" {
+		return false, nil
+	}
+	s.state = "COMPLETED"
+	s.owner = ""
+	s.expiresAt = time.Time{}
+	s.succeededCount++
+	return true, nil
+}
+
+func (s *fakeLeaseStore) MarkJobFailed(ctx context.Context, jobID string, leaseID string, lastError string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.jobID != jobID || s.owner != leaseID || s.state != "IN_PROGRESS" {
+		return false, nil
+	}
+	s.state = "FAILED"
+	s.owner = ""
+	s.expiresAt = time.Time{}
+	s.failedCount++
 	return true, nil
 }
 
