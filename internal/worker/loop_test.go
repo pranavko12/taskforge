@@ -102,4 +102,3 @@ func TestProcessOneSucceedFailTransitions(t *testing.T) {
 		t.Fatalf("expected failedCount=1 got %d", store.failedCount)
 	}
 }
-

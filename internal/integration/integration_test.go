@@ -72,6 +72,94 @@ func TestEndToEndEnqueueExecuteStatus(t *testing.T) {
 	}
 }
 
+func TestWorkerCrashSimulationCancelMidJob(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Config{
+		HTTPAddr:          ":0",
+		QueueName:         env("QUEUE_NAME", "jobs:ready"),
+		UIDir:             "./internal/api/ui",
+		LogLevel:          "info",
+		PostgresDSN:       env("POSTGRES_DSN", "postgres://taskforge:taskforge@localhost:5432/taskforge?sslmode=disable"),
+		RedisAddr:         env("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:     "",
+		RedisDB:           0,
+		WorkerConcurrency: 1,
+		RateLimitPerSec:   0,
+	}
+
+	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
+	if err != nil {
+		t.Fatalf("postgres connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr: cfg.RedisAddr,
+	})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	if err := applyMigrations(ctx, pool, "../../migrations"); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	store := api.NewPostgresStore(pool)
+	q := queue.NewRedis(cfg)
+	srv := api.NewServer(cfg, store, q, nil, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	testServer := httptest.NewServer(srv.Handler())
+	t.Cleanup(testServer.Close)
+
+	body := `{"jobType":"test","payload":{"ok":true},"idempotencyKey":"it-crash-001"}`
+	resp, err := httpPost(testServer.URL+"/jobs", []byte(body))
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	var parsed struct {
+		JobID string `json:"jobId"`
+	}
+	if err := json.Unmarshal(resp, &parsed); err != nil {
+		t.Fatalf("parse enqueue: %v", err)
+	}
+	if parsed.JobID == "" {
+		t.Fatal("missing job id")
+	}
+
+	pop, err := rdb.BRPop(ctx, 5*time.Second, cfg.QueueName).Result()
+	if err != nil || len(pop) != 2 {
+		t.Fatalf("queue pop: %v %v", err, pop)
+	}
+	if pop[1] != parsed.JobID {
+		t.Fatalf("expected %s, got %s", parsed.JobID, pop[1])
+	}
+
+	leaseStore := worker.NewPostgresStore(pool)
+	ok, err := leaseStore.AcquireLease(ctx, parsed.JobID, "worker-it-crash", time.Now().UTC(), 50*time.Millisecond)
+	if err != nil || !ok {
+		t.Fatalf("acquire lease: %v ok=%v", err, ok)
+	}
+
+	loop := worker.NewLoop(leaseStore, cfg.QueueName, "worker-it-crash", 50*time.Millisecond)
+	execCtx, cancelExec := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		cancelExec()
+	}()
+
+	if err := loop.ProcessOne(execCtx, parsed.JobID, func(ctx context.Context, jobID string) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}); err != nil {
+		t.Fatalf("process one: %v", err)
+	}
+
+	status := getJobStatus(t, testServer.URL, parsed.JobID)
+	if status.State != "FAILED" {
+		t.Fatalf("expected FAILED, got %s", status.State)
+	}
+	if status.LastError == "" {
+		t.Fatal("expected last_error to be populated")
+	}
+}
+
 func enqueueJob(t *testing.T, baseURL string) string {
 	t.Helper()
 	body := `{"jobType":"test","payload":{"ok":true},"idempotencyKey":"it-001"}`

@@ -90,4 +90,3 @@ func (l *Loop) ProcessOne(ctx context.Context, jobID string, execute ExecuteFunc
 	}
 	return nil
 }
-

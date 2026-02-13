@@ -2,8 +2,8 @@ package worker
 
 import (
 	"context"
-	"sync/atomic"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -156,15 +156,15 @@ func (q *fakeQueue) Enqueue(ctx context.Context, queueName string, jobID string)
 }
 
 type fakeLeaseStore struct {
-	mu        sync.Mutex
-	jobID     string
-	queueName string
-	state     string
-	owner     string
-	expiresAt time.Time
-	renewCount int64
+	mu             sync.Mutex
+	jobID          string
+	queueName      string
+	state          string
+	owner          string
+	expiresAt      time.Time
+	renewCount     int64
 	succeededCount int
-	failedCount int
+	failedCount    int
 }
 
 func newFakeLeaseStore() *fakeLeaseStore {
