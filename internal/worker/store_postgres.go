@@ -2,8 +2,10 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -13,6 +15,38 @@ type PostgresStore struct {
 
 func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 	return &PostgresStore{pool: pool}
+}
+
+func (s *PostgresStore) LeaseNextJob(ctx context.Context, queueName string, owner string, now time.Time, leaseFor time.Duration) (string, bool, error) {
+	var jobID string
+	err := s.pool.QueryRow(ctx, `
+		WITH candidate AS (
+			SELECT job_id
+			FROM jobs
+			WHERE queue_name = $1
+				AND state = 'PENDING'
+				AND next_run_at <= $2
+			ORDER BY next_run_at ASC, created_at ASC
+			FOR UPDATE SKIP LOCKED
+			LIMIT 1
+		)
+		UPDATE jobs j
+		SET state = 'IN_PROGRESS',
+			lease_owner = $3,
+			lease_expires_at = $4,
+			started_at = COALESCE(started_at, $2),
+			updated_at = NOW()
+		FROM candidate
+		WHERE j.job_id = candidate.job_id
+		RETURNING j.job_id
+	`, queueName, now, owner, now.Add(leaseFor)).Scan(&jobID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return jobID, true, nil
 }
 
 func (s *PostgresStore) AcquireLease(ctx context.Context, jobID string, owner string, now time.Time, leaseFor time.Duration) (bool, error) {

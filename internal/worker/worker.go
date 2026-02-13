@@ -25,6 +25,10 @@ func (w *Worker) Acquire(ctx context.Context, jobID string, now time.Time) (bool
 	return w.store.AcquireLease(ctx, jobID, w.owner, now, w.leaseFor)
 }
 
+func (w *Worker) LeaseNext(ctx context.Context, queueName string, now time.Time) (string, bool, error) {
+	return w.store.LeaseNextJob(ctx, queueName, w.owner, now, w.leaseFor)
+}
+
 func (w *Worker) Renew(ctx context.Context, jobID string, now time.Time) (bool, error) {
 	return w.store.RenewLease(ctx, jobID, w.owner, now, w.leaseFor)
 }
