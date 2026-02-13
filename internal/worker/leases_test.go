@@ -41,17 +41,36 @@ func TestRenewLeaseKeepsOwnership(t *testing.T) {
 		t.Fatalf("worker-1 acquire failed: %v ok=%v", err, ok)
 	}
 
-	ok, err = w1.Renew(context.Background(), jobID, now.Add(2*time.Second))
+	ok, err = w1.Renew(context.Background(), jobID)
 	if err != nil || !ok {
 		t.Fatalf("worker-1 renew failed: %v ok=%v", err, ok)
 	}
 
-	ok, err = w2.Renew(context.Background(), jobID, now.Add(2*time.Second))
+	ok, err = w2.Renew(context.Background(), jobID)
 	if err != nil {
 		t.Fatalf("worker-2 renew error: %v", err)
 	}
 	if ok {
 		t.Fatalf("worker-2 should not renew someone else's lease")
+	}
+}
+
+func TestRenewLeaseFailsWithWrongLeaseID(t *testing.T) {
+	store := newFakeLeaseStore()
+	jobID := "job-1"
+	now := time.Now().UTC()
+
+	ok, err := store.AcquireLease(context.Background(), jobID, "lease-1", now, 5*time.Second)
+	if err != nil || !ok {
+		t.Fatalf("initial acquire failed: %v ok=%v", err, ok)
+	}
+
+	ok, err = store.RenewLease(context.Background(), jobID, "wrong-lease-id", 5*time.Second)
+	if err != nil {
+		t.Fatalf("renew returned error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected renew to fail with wrong lease_id")
 	}
 }
 
@@ -185,14 +204,14 @@ func (s *fakeLeaseStore) AcquireLease(ctx context.Context, jobID string, owner s
 	return true, nil
 }
 
-func (s *fakeLeaseStore) RenewLease(ctx context.Context, jobID string, owner string, now time.Time, leaseFor time.Duration) (bool, error) {
+func (s *fakeLeaseStore) RenewLease(ctx context.Context, jobID string, leaseID string, extendBy time.Duration) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.owner != owner {
+	if s.owner != leaseID {
 		return false, nil
 	}
-	s.expiresAt = now.Add(leaseFor)
+	s.expiresAt = time.Now().UTC().Add(extendBy)
 	return true, nil
 }
 
