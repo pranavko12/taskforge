@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
@@ -88,6 +89,43 @@ func TestRequeueExpiredLease(t *testing.T) {
 	}
 }
 
+func TestLeaseNextJobConcurrentNoDoubleLease(t *testing.T) {
+	store := newFakeLeaseStore()
+	now := time.Now().UTC()
+	leaseFor := 10 * time.Second
+	workers := 8
+
+	results := make(chan string, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			jobID, ok, err := store.LeaseNextJob(context.Background(), "jobs:ready", "worker", now, leaseFor)
+			if err != nil {
+				t.Errorf("lease next error: %v", err)
+				return
+			}
+			if ok {
+				results <- jobID
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+
+	var leased []string
+	for id := range results {
+		leased = append(leased, id)
+	}
+	if len(leased) != 1 {
+		t.Fatalf("expected exactly one successful lease, got %d (%v)", len(leased), leased)
+	}
+	if leased[0] != "job-1" {
+		t.Fatalf("expected leased job-1, got %q", leased[0])
+	}
+}
+
 type fakeQueue struct {
 	enqueued []string
 }
@@ -98,24 +136,59 @@ func (q *fakeQueue) Enqueue(ctx context.Context, queueName string, jobID string)
 }
 
 type fakeLeaseStore struct {
+	mu        sync.Mutex
+	jobID     string
+	queueName string
+	state     string
 	owner     string
 	expiresAt time.Time
 }
 
 func newFakeLeaseStore() *fakeLeaseStore {
-	return &fakeLeaseStore{}
+	return &fakeLeaseStore{
+		jobID:     "job-1",
+		queueName: "jobs:ready",
+		state:     "PENDING",
+	}
+}
+
+func (s *fakeLeaseStore) LeaseNextJob(ctx context.Context, queueName string, owner string, now time.Time, leaseFor time.Duration) (string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if queueName != s.queueName {
+		return "", false, nil
+	}
+	if s.state != "PENDING" {
+		return "", false, nil
+	}
+	if s.owner != "" && s.expiresAt.After(now) {
+		return "", false, nil
+	}
+
+	s.owner = owner
+	s.expiresAt = now.Add(leaseFor)
+	s.state = "IN_PROGRESS"
+	return s.jobID, true, nil
 }
 
 func (s *fakeLeaseStore) AcquireLease(ctx context.Context, jobID string, owner string, now time.Time, leaseFor time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.owner != "" && s.expiresAt.After(now) {
 		return false, nil
 	}
 	s.owner = owner
 	s.expiresAt = now.Add(leaseFor)
+	s.state = "IN_PROGRESS"
 	return true, nil
 }
 
 func (s *fakeLeaseStore) RenewLease(ctx context.Context, jobID string, owner string, now time.Time, leaseFor time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.owner != owner {
 		return false, nil
 	}
@@ -124,15 +197,22 @@ func (s *fakeLeaseStore) RenewLease(ctx context.Context, jobID string, owner str
 }
 
 func (s *fakeLeaseStore) ListExpiredLeases(ctx context.Context, now time.Time, limit int) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.owner != "" && !s.expiresAt.After(now) {
-		return []string{"job-1"}, nil
+		return []string{s.jobID}, nil
 	}
 	return nil, nil
 }
 
 func (s *fakeLeaseStore) ResetLease(ctx context.Context, jobID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.owner = ""
 	s.expiresAt = time.Time{}
+	s.state = "PENDING"
 	return nil
 }
 
