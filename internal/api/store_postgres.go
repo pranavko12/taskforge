@@ -29,10 +29,10 @@ func (s *PostgresStore) InsertJob(ctx context.Context, jobID string, req SubmitJ
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO jobs (
 			job_id, queue_name, job_type, payload, idempotency_key, state, max_retries,
-			max_attempts, attempt_count, initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at, traceparent
+			max_attempts, attempt_count, initial_delay, backoff, max_delay, jitter, next_run_at, traceparent
 		)
 		VALUES ($1, $2, $3, $4, $5, 'PENDING', $6, $7, 0, $8, $9, $10, $11, NOW(), $12)
-	`, jobID, queueName, req.JobType, req.Payload, req.IdempotencyKey, req.MaxRetries, req.MaxAttempts, req.InitialDelayMs, req.BackoffMultiplier, req.MaxDelayMs, req.Jitter, traceparent)
+	`, jobID, queueName, req.JobType, req.Payload, req.IdempotencyKey, req.MaxRetries, req.MaxAttempts, req.InitialDelay, req.Backoff, req.MaxDelay, req.Jitter, traceparent)
 	return err
 }
 
@@ -40,7 +40,7 @@ func (s *PostgresStore) GetJob(ctx context.Context, jobID string) (JobStatusResp
 	var resp JobStatusResponse
 	err := s.pool.QueryRow(ctx, `
 		SELECT job_id, job_type, state, retry_count, max_retries, max_attempts, attempt_count,
-			initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at, traceparent,
+			initial_delay, backoff, max_delay, jitter, next_run_at, traceparent,
 			COALESCE(last_error, ''), scheduled_at, available_at, started_at, completed_at, created_at, updated_at
 		FROM jobs
 		WHERE job_id = $1
@@ -52,9 +52,9 @@ func (s *PostgresStore) GetJob(ctx context.Context, jobID string) (JobStatusResp
 		&resp.MaxRetries,
 		&resp.MaxAttempts,
 		&resp.AttemptCount,
-		&resp.InitialDelayMs,
-		&resp.BackoffMultiplier,
-		&resp.MaxDelayMs,
+		&resp.InitialDelay,
+		&resp.Backoff,
+		&resp.MaxDelay,
 		&resp.Jitter,
 		&resp.NextRunAt,
 		&resp.Traceparent,
@@ -79,7 +79,7 @@ func (s *PostgresStore) GetJobByIdempotencyKey(ctx context.Context, key string, 
 	var resp JobStatusResponse
 	err := s.pool.QueryRow(ctx, `
 		SELECT job_id, job_type, state, retry_count, max_retries, max_attempts, attempt_count,
-			initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at, traceparent,
+			initial_delay, backoff, max_delay, jitter, next_run_at, traceparent,
 			COALESCE(last_error, ''), scheduled_at, available_at, started_at, completed_at, created_at, updated_at
 		FROM jobs
 		WHERE idempotency_key = $1 AND queue_name = $2
@@ -93,9 +93,9 @@ func (s *PostgresStore) GetJobByIdempotencyKey(ctx context.Context, key string, 
 		&resp.MaxRetries,
 		&resp.MaxAttempts,
 		&resp.AttemptCount,
-		&resp.InitialDelayMs,
-		&resp.BackoffMultiplier,
-		&resp.MaxDelayMs,
+		&resp.InitialDelay,
+		&resp.Backoff,
+		&resp.MaxDelay,
 		&resp.Jitter,
 		&resp.NextRunAt,
 		&resp.Traceparent,
@@ -263,7 +263,7 @@ func (s *PostgresStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatus
 
 	itemsSQL := `
 		SELECT job_id, job_type, state, retry_count, max_retries, max_attempts, attempt_count,
-			initial_delay_ms, backoff_multiplier, max_delay_ms, jitter, next_run_at, traceparent,
+			initial_delay, backoff, max_delay, jitter, next_run_at, traceparent,
 			COALESCE(last_error, ''), scheduled_at, available_at, started_at, completed_at, created_at, updated_at
 		FROM jobs
 		WHERE ` + where + `
@@ -288,9 +288,9 @@ func (s *PostgresStore) QueryJobs(ctx context.Context, q JobsQuery) ([]JobStatus
 			&resp.MaxRetries,
 			&resp.MaxAttempts,
 			&resp.AttemptCount,
-			&resp.InitialDelayMs,
-			&resp.BackoffMultiplier,
-			&resp.MaxDelayMs,
+			&resp.InitialDelay,
+			&resp.Backoff,
+			&resp.MaxDelay,
 			&resp.Jitter,
 			&resp.NextRunAt,
 			&resp.Traceparent,

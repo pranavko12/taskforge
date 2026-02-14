@@ -3,7 +3,6 @@ package scheduler
 import (
 	"context"
 	"errors"
-	"math/rand"
 	"testing"
 	"time"
 
@@ -14,14 +13,14 @@ func TestScheduleRetrySetsNextRunAtDeterministically(t *testing.T) {
 	now := time.Date(2026, 2, 2, 12, 0, 0, 0, time.UTC)
 	store := &fakeStore{
 		job: RetryJob{
-			JobID:             "job-1",
-			RetryCount:        0,
-			MaxAttempts:       5,
-			InitialDelayMs:    1000,
-			BackoffMultiplier: 2,
-			MaxDelayMs:        60000,
-			Jitter:            0.25,
-			Traceparent:       "",
+			JobID:        "job-1",
+			RetryCount:   0,
+			MaxAttempts:  5,
+			InitialDelay: 1000,
+			Backoff:      2,
+			MaxDelay:     60000,
+			Jitter:       false,
+			Traceparent:  "",
 		},
 	}
 	q := &fakeQueue{}
@@ -34,13 +33,13 @@ func TestScheduleRetrySetsNextRunAtDeterministically(t *testing.T) {
 	}
 
 	policy := retry.Policy{
-		MaxAttempts:       5,
-		InitialDelay:      1 * time.Second,
-		BackoffMultiplier: 2,
-		MaxDelay:          60 * time.Second,
-		Jitter:            0.25,
+		MaxAttempts:  5,
+		InitialDelay: 1 * time.Second,
+		Backoff:      2,
+		MaxDelay:     60 * time.Second,
+		Jitter:       false,
 	}
-	want := retry.NextRunAt(now, 1, policy, randFromSeed(seed))
+	want := retry.NextRunAt(now, 1, policy)
 	if !got.Equal(want) {
 		t.Fatalf("expected %v, got %v", want, got)
 	}
@@ -94,10 +93,6 @@ func TestEnqueueDueRetries(t *testing.T) {
 	if len(store.marked) != 2 {
 		t.Fatalf("expected 2 marked, got %d", len(store.marked))
 	}
-}
-
-func randFromSeed(seed int64) *rand.Rand {
-	return rand.New(rand.NewSource(seed))
 }
 
 type fakeStore struct {

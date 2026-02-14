@@ -6,15 +6,19 @@ import (
 )
 
 type SubmitJobRequest struct {
-	JobType           string          `json:"jobType"`
-	Payload           json.RawMessage `json:"payload"`
-	IdempotencyKey    string          `json:"idempotencyKey"`
-	MaxRetries        int             `json:"maxRetries"`
-	MaxAttempts       int             `json:"maxAttempts"`
-	InitialDelayMs    int             `json:"initialDelayMs"`
-	BackoffMultiplier float64         `json:"backoffMultiplier"`
-	MaxDelayMs        int             `json:"maxDelayMs"`
-	Jitter            float64         `json:"jitter"`
+	JobType        string          `json:"jobType"`
+	Payload        json.RawMessage `json:"payload"`
+	IdempotencyKey string          `json:"idempotencyKey"`
+	MaxRetries     int             `json:"maxRetries"`
+	MaxAttempts    int             `json:"maxAttempts"`
+	InitialDelay   int             `json:"initialDelay"`
+	Backoff        float64         `json:"backoff"`
+	MaxDelay       int             `json:"maxDelay"`
+	Jitter         bool            `json:"jitter"`
+	// Legacy aliases kept for backward compatibility.
+	InitialDelayMs    int     `json:"initialDelayMs"`
+	BackoffMultiplier float64 `json:"backoffMultiplier"`
+	MaxDelayMs        int     `json:"maxDelayMs"`
 }
 
 type SubmitJobResponse struct {
@@ -22,26 +26,26 @@ type SubmitJobResponse struct {
 }
 
 type JobStatusResponse struct {
-	JobID             string     `json:"jobId"`
-	JobType           string     `json:"jobType"`
-	State             string     `json:"state"`
-	RetryCount        int        `json:"retryCount"`
-	MaxRetries        int        `json:"maxRetries"`
-	MaxAttempts       int        `json:"maxAttempts"`
-	AttemptCount      int        `json:"attemptCount"`
-	InitialDelayMs    int        `json:"initialDelayMs"`
-	BackoffMultiplier float64    `json:"backoffMultiplier"`
-	MaxDelayMs        int        `json:"maxDelayMs"`
-	Jitter            float64    `json:"jitter"`
-	NextRunAt         time.Time  `json:"nextRunAt"`
-	LastError         string     `json:"lastError"`
-	ScheduledAt       time.Time  `json:"scheduledAt"`
-	AvailableAt       time.Time  `json:"availableAt"`
-	StartedAt         *time.Time `json:"startedAt,omitempty"`
-	CompletedAt       *time.Time `json:"completedAt,omitempty"`
-	CreatedAt         time.Time  `json:"createdAt"`
-	UpdatedAt         time.Time  `json:"updatedAt"`
-	Traceparent       string     `json:"traceparent,omitempty"`
+	JobID        string     `json:"jobId"`
+	JobType      string     `json:"jobType"`
+	State        string     `json:"state"`
+	RetryCount   int        `json:"retryCount"`
+	MaxRetries   int        `json:"maxRetries"`
+	MaxAttempts  int        `json:"maxAttempts"`
+	AttemptCount int        `json:"attemptCount"`
+	InitialDelay int        `json:"initialDelay"`
+	Backoff      float64    `json:"backoff"`
+	MaxDelay     int        `json:"maxDelay"`
+	Jitter       bool       `json:"jitter"`
+	NextRunAt    time.Time  `json:"nextRunAt"`
+	LastError    string     `json:"lastError"`
+	ScheduledAt  time.Time  `json:"scheduledAt"`
+	AvailableAt  time.Time  `json:"availableAt"`
+	StartedAt    *time.Time `json:"startedAt,omitempty"`
+	CompletedAt  *time.Time `json:"completedAt,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	UpdatedAt    time.Time  `json:"updatedAt"`
+	Traceparent  string     `json:"traceparent,omitempty"`
 }
 
 type JobsListResponse struct {

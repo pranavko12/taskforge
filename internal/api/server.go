@@ -422,26 +422,32 @@ func applyRetryPolicyDefaults(req *SubmitJobRequest) error {
 			req.MaxRetries = 4
 		}
 	}
-	if req.InitialDelayMs <= 0 {
-		req.InitialDelayMs = 1000
+	if req.InitialDelay <= 0 && req.InitialDelayMs > 0 {
+		req.InitialDelay = req.InitialDelayMs
 	}
-	if req.BackoffMultiplier <= 0 {
-		req.BackoffMultiplier = 2
+	if req.Backoff <= 0 && req.BackoffMultiplier > 0 {
+		req.Backoff = req.BackoffMultiplier
 	}
-	if req.MaxDelayMs <= 0 {
-		req.MaxDelayMs = 60000
+	if req.MaxDelay <= 0 && req.MaxDelayMs > 0 {
+		req.MaxDelay = req.MaxDelayMs
 	}
-	if req.Jitter < 0 || req.Jitter > 1 {
-		return errors.New("jitter must be between 0 and 1")
+	if req.InitialDelay <= 0 {
+		req.InitialDelay = 1000
 	}
-	if req.BackoffMultiplier < 1 {
-		return errors.New("backoffMultiplier must be >= 1")
+	if req.Backoff <= 0 {
+		req.Backoff = 2
 	}
-	if req.InitialDelayMs < 0 {
-		return errors.New("initialDelayMs must be >= 0")
+	if req.MaxDelay <= 0 {
+		req.MaxDelay = 60000
 	}
-	if req.MaxDelayMs < req.InitialDelayMs {
-		return errors.New("maxDelayMs must be >= initialDelayMs")
+	if req.Backoff < 1 {
+		return errors.New("backoff must be >= 1")
+	}
+	if req.InitialDelay < 0 {
+		return errors.New("initialDelay must be >= 0")
+	}
+	if req.MaxDelay < req.InitialDelay {
+		return errors.New("maxDelay must be >= initialDelay")
 	}
 	return nil
 }
