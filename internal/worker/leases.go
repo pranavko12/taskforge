@@ -11,6 +11,7 @@ type LeaseStore interface {
 	RenewLease(ctx context.Context, jobID string, leaseID string, extendBy time.Duration) (bool, error)
 	MarkJobSucceeded(ctx context.Context, jobID string, leaseID string) (bool, error)
 	MarkJobFailed(ctx context.Context, jobID string, leaseID string, lastError string) (bool, error)
+	MarkJobTerminal(ctx context.Context, jobID string, leaseID string, lastError string) (bool, error)
 	ListExpiredLeases(ctx context.Context, now time.Time, limit int) ([]string, error)
 	ResetLease(ctx context.Context, jobID string) error
 	GetTraceparent(ctx context.Context, jobID string) (string, error)

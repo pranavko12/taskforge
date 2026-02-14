@@ -122,6 +122,59 @@ func (s *PostgresStore) MarkJobFailed(ctx context.Context, jobID string, leaseID
 	return tag.RowsAffected() == 1, nil
 }
 
+func (s *PostgresStore) MarkJobTerminal(ctx context.Context, jobID string, leaseID string, lastError string) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE jobs
+		SET state = 'DLQ',
+			lease_owner = NULL,
+			lease_expires_at = NULL,
+			last_error = $3,
+			updated_at = NOW()
+		WHERE job_id = $1
+			AND state = 'IN_PROGRESS'
+			AND lease_owner = $2
+	`, jobID, leaseID, lastError)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() != 1 {
+		err = tx.Commit(ctx)
+		if err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
+	reason := lastError
+	if reason == "" {
+		reason = "terminal failure"
+	}
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO dlq_entries (job_id, reason)
+		VALUES ($1, $2)
+		ON CONFLICT (job_id) DO UPDATE
+		SET reason = EXCLUDED.reason, created_at = NOW()
+	`, jobID, reason); err != nil {
+		return false, err
+	}
+
+	err = tx.Commit(ctx)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *PostgresStore) ListExpiredLeases(ctx context.Context, now time.Time, limit int) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT job_id

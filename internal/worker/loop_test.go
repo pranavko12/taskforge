@@ -98,7 +98,7 @@ func TestProcessOneSucceedFailTransitions(t *testing.T) {
 	if err := loop.ProcessOne(context.Background(), "job-1", func(ctx context.Context, jobID string) error { return errors.New("boom") }); err != nil {
 		t.Fatalf("failure path failed: %v", err)
 	}
-	if store.failedCount != 1 {
-		t.Fatalf("expected failedCount=1 got %d", store.failedCount)
+	if store.terminalCount != 1 {
+		t.Fatalf("expected terminalCount=1 got %d", store.terminalCount)
 	}
 }

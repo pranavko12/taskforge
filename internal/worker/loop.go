@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/pranavko12/taskforge/internal/retry"
 )
 
 type ExecuteFunc func(ctx context.Context, jobID string) error
@@ -71,12 +73,23 @@ func (l *Loop) ProcessOne(ctx context.Context, jobID string, execute ExecuteFunc
 	}
 
 	if runErr != nil {
-		ok, err := l.store.MarkJobFailed(context.Background(), jobID, l.worker.leaseID, runErr.Error())
+		if retry.ClassifyError(runErr) == retry.ClassRetryable {
+			ok, err := l.store.MarkJobFailed(context.Background(), jobID, l.worker.leaseID, runErr.Error())
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("failed to mark job %s failed: lease mismatch or invalid state", jobID)
+			}
+			return nil
+		}
+
+		ok, err := l.store.MarkJobTerminal(context.Background(), jobID, l.worker.leaseID, runErr.Error())
 		if err != nil {
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("failed to mark job %s failed: lease mismatch or invalid state", jobID)
+			return fmt.Errorf("failed to mark job %s terminal: lease mismatch or invalid state", jobID)
 		}
 		return nil
 	}

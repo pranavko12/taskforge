@@ -165,6 +165,7 @@ type fakeLeaseStore struct {
 	renewCount     int64
 	succeededCount int
 	failedCount    int
+	terminalCount  int
 }
 
 func newFakeLeaseStore() *fakeLeaseStore {
@@ -245,6 +246,20 @@ func (s *fakeLeaseStore) MarkJobFailed(ctx context.Context, jobID string, leaseI
 	s.owner = ""
 	s.expiresAt = time.Time{}
 	s.failedCount++
+	return true, nil
+}
+
+func (s *fakeLeaseStore) MarkJobTerminal(ctx context.Context, jobID string, leaseID string, lastError string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.jobID != jobID || s.owner != leaseID || s.state != "IN_PROGRESS" {
+		return false, nil
+	}
+	s.state = "DLQ"
+	s.owner = ""
+	s.expiresAt = time.Time{}
+	s.terminalCount++
 	return true, nil
 }
 
