@@ -9,5 +9,6 @@ SET initial_delay = initial_delay_ms,
     max_delay = max_delay_ms;
 
 ALTER TABLE jobs
+  ALTER COLUMN jitter DROP DEFAULT,
   ALTER COLUMN jitter TYPE BOOLEAN USING FALSE,
   ALTER COLUMN jitter SET DEFAULT FALSE;
