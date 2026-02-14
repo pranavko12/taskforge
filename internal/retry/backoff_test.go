@@ -1,18 +1,17 @@
 package retry
 
 import (
-	"math/rand"
 	"testing"
 	"time"
 )
 
 func TestNextDelayNoJitter(t *testing.T) {
 	p := Policy{
-		MaxAttempts:       5,
-		InitialDelay:      1 * time.Second,
-		BackoffMultiplier: 2,
-		MaxDelay:          10 * time.Second,
-		Jitter:            0,
+		MaxAttempts:  5,
+		InitialDelay: 1 * time.Second,
+		Backoff:      2,
+		MaxDelay:     10 * time.Second,
+		Jitter:       false,
 	}
 
 	cases := []struct {
@@ -27,30 +26,26 @@ func TestNextDelayNoJitter(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		if got := NextDelay(c.attempt, p, nil); got != c.want {
+		if got := NextDelay(c.attempt, p); got != c.want {
 			t.Fatalf("attempt %d: expected %v, got %v", c.attempt, c.want, got)
 		}
 	}
 }
 
-func TestNextRunAtDeterministicWithSeed(t *testing.T) {
+func TestNextRunAtMatchesExpectedForAttempt(t *testing.T) {
 	p := Policy{
-		MaxAttempts:       3,
-		InitialDelay:      1 * time.Second,
-		BackoffMultiplier: 2,
-		MaxDelay:          10 * time.Second,
-		Jitter:            0.25,
+		MaxAttempts:  5,
+		InitialDelay: 1 * time.Second,
+		Backoff:      2,
+		MaxDelay:     10 * time.Second,
+		Jitter:       false,
 	}
 
 	now := time.Date(2026, 2, 2, 12, 0, 0, 0, time.UTC)
+	got := NextRunAt(now, 4, p)
+	want := now.Add(8 * time.Second)
 
-	rng1 := rand.New(rand.NewSource(42))
-	rng2 := rand.New(rand.NewSource(42))
-
-	got1 := NextRunAt(now, 2, p, rng1)
-	got2 := NextRunAt(now, 2, p, rng2)
-
-	if !got1.Equal(got2) {
-		t.Fatalf("expected deterministic times, got %v and %v", got1, got2)
+	if !got.Equal(want) {
+		t.Fatalf("expected %v, got %v", want, got)
 	}
 }

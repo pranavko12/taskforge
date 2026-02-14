@@ -3,7 +3,6 @@ package scheduler
 import (
 	"context"
 	"errors"
-	"math/rand"
 	"time"
 
 	"github.com/pranavko12/taskforge/internal/retry"
@@ -16,14 +15,14 @@ import (
 var ErrMaxAttemptsExceeded = errors.New("max attempts exceeded")
 
 type RetryJob struct {
-	JobID             string
-	RetryCount        int
-	MaxAttempts       int
-	InitialDelayMs    int
-	BackoffMultiplier float64
-	MaxDelayMs        int
-	Jitter            float64
-	Traceparent       string
+	JobID        string
+	RetryCount   int
+	MaxAttempts  int
+	InitialDelay int
+	Backoff      float64
+	MaxDelay     int
+	Jitter       bool
+	Traceparent  string
 }
 
 type Store interface {
@@ -56,6 +55,8 @@ func New(store Store, queue Queue, queueName string) *Scheduler {
 
 // ScheduleRetry computes the next run time for a retry and persists it.
 func (s *Scheduler) ScheduleRetry(ctx context.Context, jobID string, now time.Time, seed int64) (time.Time, error) {
+	_ = seed // jitter is intentionally disabled in v2 retry policy.
+
 	job, err := s.store.GetRetryJob(ctx, jobID)
 	if err != nil {
 		return time.Time{}, err
@@ -80,18 +81,17 @@ func (s *Scheduler) ScheduleRetry(ctx context.Context, jobID string, now time.Ti
 	}
 
 	policy := retry.Policy{
-		MaxAttempts:       job.MaxAttempts,
-		InitialDelay:      time.Duration(job.InitialDelayMs) * time.Millisecond,
-		BackoffMultiplier: job.BackoffMultiplier,
-		MaxDelay:          time.Duration(job.MaxDelayMs) * time.Millisecond,
-		Jitter:            job.Jitter,
+		MaxAttempts:  job.MaxAttempts,
+		InitialDelay: time.Duration(job.InitialDelay) * time.Millisecond,
+		Backoff:      job.Backoff,
+		MaxDelay:     time.Duration(job.MaxDelay) * time.Millisecond,
+		Jitter:       job.Jitter,
 	}
 	if err := policy.Validate(); err != nil {
 		return time.Time{}, err
 	}
 
-	rng := rand.New(rand.NewSource(seed))
-	nextRunAt := retry.NextRunAt(now, nextRetryCount, policy, rng)
+	nextRunAt := retry.NextRunAt(now, nextRetryCount, policy)
 	if err := s.store.UpdateRetrySchedule(ctx, jobID, nextRetryCount, nextRunAt); err != nil {
 		return time.Time{}, err
 	}
