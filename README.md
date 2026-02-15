@@ -112,17 +112,20 @@ State machine is enforced in the database and code.
 
 Core behaviors:
 - Idempotency keys on job creation (reused keys return existing job).
-- Retries with exponential backoff and optional jitter.
-- Scheduler computes `next_run_at` deterministically (seeded jitter for tests).
+- Retries with exponential backoff via policy fields: `maxAttempts`, `initialDelay`, `backoff`, `maxDelay`, `jitter`.
+- In v2, jitter is off by default (`jitter=false`) for deterministic scheduling.
+- Scheduler computes `next_run_at` from attempt number and retry policy.
 - Worker leases with visibility timeouts and heartbeat-based renewal.
+- Failure classification: retryable failures transition to `FAILED`; terminal failures transition to `DLQ`.
 - Concurrency limits and optional rate limiting per queue.
 
 ---
 
 ## Dead-Letter Queue (DLQ)
 
-- Terminal failures move jobs into DLQ with a reason.
-- Replay re-enqueues the job and resets attempt counters.
+- DLQ is stored in Postgres table `dead_letters`.
+- Each entry stores `job_id`, job `payload`, `reason`, `last_error`, `attempts`, and timestamps (`failed_at`, `created_at`, `updated_at`).
+- Replay re-enqueues the job and resets execution state (`retry_count=0`, `attempt_count=0`, `state=PENDING`, `next_run_at=NOW()`).
 
 API:
 - GET `/dlq`
