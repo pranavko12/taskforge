@@ -160,6 +160,103 @@ func TestWorkerCrashSimulationCancelMidJob(t *testing.T) {
 	}
 }
 
+func TestDLQReplayResetsCountersAndSchedule(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Config{
+		HTTPAddr:          ":0",
+		QueueName:         env("QUEUE_NAME", "jobs:ready"),
+		UIDir:             "./internal/api/ui",
+		LogLevel:          "info",
+		PostgresDSN:       env("POSTGRES_DSN", "postgres://taskforge:taskforge@localhost:5432/taskforge?sslmode=disable"),
+		RedisAddr:         env("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:     "",
+		RedisDB:           0,
+		WorkerConcurrency: 1,
+		RateLimitPerSec:   0,
+	}
+
+	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
+	if err != nil {
+		t.Fatalf("postgres connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr: cfg.RedisAddr,
+	})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	if err := applyMigrations(ctx, pool, "../../migrations"); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	store := api.NewPostgresStore(pool)
+	q := queue.NewRedis(cfg)
+	srv := api.NewServer(cfg, store, q, nil, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	testServer := httptest.NewServer(srv.Handler())
+	t.Cleanup(testServer.Close)
+
+	jobID := enqueueJob(t, testServer.URL)
+
+	_, err = pool.Exec(ctx, `
+		UPDATE jobs
+		SET state = 'DLQ',
+			retry_count = 2,
+			attempt_count = 3,
+			last_error = 'bad payload',
+			next_run_at = NOW() + INTERVAL '10 minutes',
+			updated_at = NOW()
+		WHERE job_id = $1
+	`, jobID)
+	if err != nil {
+		t.Fatalf("prepare dlq job: %v", err)
+	}
+
+	_, err = pool.Exec(ctx, `
+		INSERT INTO dead_letters (job_id, queue_name, job_type, payload, reason, last_error, attempts, failed_at, created_at, updated_at)
+		SELECT job_id, queue_name, job_type, payload, 'manual dlq', 'bad payload', 3, NOW(), NOW(), NOW()
+		FROM jobs
+		WHERE job_id = $1
+	`, jobID)
+	if err != nil {
+		t.Fatalf("insert dead_letter: %v", err)
+	}
+
+	if _, err := httpPost(testServer.URL+"/dlq/"+jobID+"/replay", nil); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	var state string
+	var retryCount, attemptCount int
+	var nextRunAt time.Time
+	err = pool.QueryRow(ctx, `
+		SELECT state, retry_count, attempt_count, next_run_at
+		FROM jobs
+		WHERE job_id = $1
+	`, jobID).Scan(&state, &retryCount, &attemptCount, &nextRunAt)
+	if err != nil {
+		t.Fatalf("query replayed job: %v", err)
+	}
+
+	if state != "PENDING" {
+		t.Fatalf("expected state PENDING, got %s", state)
+	}
+	if retryCount != 0 || attemptCount != 0 {
+		t.Fatalf("expected counters reset, got retry=%d attempt=%d", retryCount, attemptCount)
+	}
+	if delta := time.Since(nextRunAt); delta < -2*time.Second || delta > 2*time.Second {
+		t.Fatalf("expected next_run_at near now, got %v (delta %v)", nextRunAt, delta)
+	}
+
+	var dlqCount int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(1) FROM dead_letters WHERE job_id = $1`, jobID).Scan(&dlqCount); err != nil {
+		t.Fatalf("query dead_letters: %v", err)
+	}
+	if dlqCount != 0 {
+		t.Fatalf("expected dead_letter removed on replay, count=%d", dlqCount)
+	}
+}
+
 func enqueueJob(t *testing.T, baseURL string) string {
 	t.Helper()
 	body := `{"jobType":"test","payload":{"ok":true},"idempotencyKey":"it-001"}`
