@@ -222,8 +222,13 @@ func (s *PostgresStore) ReplayDLQ(ctx context.Context, jobID string) error {
 		SET state = 'PENDING',
 			retry_count = 0,
 			attempt_count = 0,
+			lease_owner = NULL,
+			lease_expires_at = NULL,
 			last_error = '',
+			started_at = NULL,
+			completed_at = NULL,
 			next_run_at = NOW(),
+			available_at = NOW(),
 			updated_at = NOW()
 		WHERE job_id = $1
 	`, jobID)
