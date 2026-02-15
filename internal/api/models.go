@@ -65,9 +65,14 @@ type JobsQuery struct {
 }
 
 type DLQEntry struct {
-	JobID     string    `json:"jobId"`
-	Reason    string    `json:"reason"`
-	CreatedAt time.Time `json:"createdAt"`
+	JobID     string          `json:"jobId"`
+	Reason    string          `json:"reason"`
+	LastError string          `json:"lastError"`
+	Attempts  int             `json:"attempts"`
+	Payload   json.RawMessage `json:"payload"`
+	FailedAt  time.Time       `json:"failedAt"`
+	CreatedAt time.Time       `json:"createdAt"`
+	UpdatedAt time.Time       `json:"updatedAt"`
 }
 
 type DLQRequest struct {

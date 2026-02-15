@@ -111,10 +111,19 @@ func (s *PostgresStore) MarkTerminalFailure(ctx context.Context, jobID string, r
 		reason = "terminal failure"
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO dlq_entries (job_id, reason)
-		VALUES ($1, $2)
+		INSERT INTO dead_letters (
+			job_id, queue_name, job_type, payload, reason, last_error, attempts, failed_at, created_at, updated_at
+		)
+		SELECT
+			job_id, queue_name, job_type, payload, $2, COALESCE(last_error, ''), attempt_count, NOW(), NOW(), NOW()
+		FROM jobs
+		WHERE job_id = $1
 		ON CONFLICT (job_id) DO UPDATE
-		SET reason = EXCLUDED.reason, created_at = NOW()
+		SET reason = EXCLUDED.reason,
+			last_error = EXCLUDED.last_error,
+			attempts = EXCLUDED.attempts,
+			failed_at = EXCLUDED.failed_at,
+			updated_at = NOW()
 	`, jobID, reason)
 	if err != nil {
 		return err

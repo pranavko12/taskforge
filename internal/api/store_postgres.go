@@ -117,24 +117,39 @@ func (s *PostgresStore) GetJobByIdempotencyKey(ctx context.Context, key string, 
 }
 
 func (s *PostgresStore) InsertDLQEntry(ctx context.Context, jobID string, reason string) error {
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO dlq_entries (job_id, reason)
-		VALUES ($1, $2)
+	tag, err := s.pool.Exec(ctx, `
+		INSERT INTO dead_letters (
+			job_id, queue_name, job_type, payload, reason, last_error, attempts, failed_at, created_at, updated_at
+		)
+		SELECT
+			job_id, queue_name, job_type, payload, $2, COALESCE(last_error, ''), attempt_count, NOW(), NOW(), NOW()
+		FROM jobs
+		WHERE job_id = $1
 		ON CONFLICT (job_id) DO UPDATE
-		SET reason = EXCLUDED.reason, created_at = NOW()
+		SET reason = EXCLUDED.reason,
+			last_error = EXCLUDED.last_error,
+			attempts = EXCLUDED.attempts,
+			failed_at = EXCLUDED.failed_at,
+			updated_at = NOW()
 	`, jobID, reason)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errNotFound
+	}
 	return err
 }
 
 func (s *PostgresStore) ListDLQ(ctx context.Context, limit, offset int) ([]DLQEntry, int, error) {
 	var total int
-	if err := s.pool.QueryRow(ctx, `SELECT COUNT(1) FROM dlq_entries`).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(1) FROM dead_letters`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT job_id, reason, created_at
-		FROM dlq_entries
+		SELECT job_id, reason, COALESCE(last_error, ''), attempts, payload, failed_at, created_at, updated_at
+		FROM dead_letters
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 	`, limit, offset)
@@ -146,7 +161,16 @@ func (s *PostgresStore) ListDLQ(ctx context.Context, limit, offset int) ([]DLQEn
 	var items []DLQEntry
 	for rows.Next() {
 		var entry DLQEntry
-		if err := rows.Scan(&entry.JobID, &entry.Reason, &entry.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&entry.JobID,
+			&entry.Reason,
+			&entry.LastError,
+			&entry.Attempts,
+			&entry.Payload,
+			&entry.FailedAt,
+			&entry.CreatedAt,
+			&entry.UpdatedAt,
+		); err != nil {
 			return nil, 0, err
 		}
 		items = append(items, entry)
@@ -160,10 +184,19 @@ func (s *PostgresStore) ListDLQ(ctx context.Context, limit, offset int) ([]DLQEn
 func (s *PostgresStore) GetDLQEntry(ctx context.Context, jobID string) (DLQEntry, error) {
 	var entry DLQEntry
 	err := s.pool.QueryRow(ctx, `
-		SELECT job_id, reason, created_at
-		FROM dlq_entries
+		SELECT job_id, reason, COALESCE(last_error, ''), attempts, payload, failed_at, created_at, updated_at
+		FROM dead_letters
 		WHERE job_id = $1
-	`, jobID).Scan(&entry.JobID, &entry.Reason, &entry.CreatedAt)
+	`, jobID).Scan(
+		&entry.JobID,
+		&entry.Reason,
+		&entry.LastError,
+		&entry.Attempts,
+		&entry.Payload,
+		&entry.FailedAt,
+		&entry.CreatedAt,
+		&entry.UpdatedAt,
+	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return DLQEntry{}, errNotFound
@@ -201,7 +234,7 @@ func (s *PostgresStore) ReplayDLQ(ctx context.Context, jobID string) error {
 		return errNotFound
 	}
 
-	_, err = tx.Exec(ctx, `DELETE FROM dlq_entries WHERE job_id = $1`, jobID)
+	_, err = tx.Exec(ctx, `DELETE FROM dead_letters WHERE job_id = $1`, jobID)
 	if err != nil {
 		return err
 	}

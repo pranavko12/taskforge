@@ -14,11 +14,29 @@ func TestDLQListAndInspect(t *testing.T) {
 	now := time.Date(2026, 2, 3, 10, 0, 0, 0, time.UTC)
 	store := fakeStore{
 		dlqEntries: []DLQEntry{
-			{JobID: "job-1", Reason: "failed", CreatedAt: now},
+			{
+				JobID:     "job-1",
+				Reason:    "failed",
+				LastError: "boom",
+				Attempts:  3,
+				Payload:   json.RawMessage(`{"task":"email"}`),
+				FailedAt:  now,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
 		},
-		dlqTotal:        1,
-		getDLQEntryResp: DLQEntry{JobID: "job-1", Reason: "failed", CreatedAt: now},
-		getJobResp:      JobStatusResponse{JobID: "job-1"},
+		dlqTotal: 1,
+		getDLQEntryResp: DLQEntry{
+			JobID:     "job-1",
+			Reason:    "failed",
+			LastError: "boom",
+			Attempts:  3,
+			Payload:   json.RawMessage(`{"task":"email"}`),
+			FailedAt:  now,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		getJobResp: JobStatusResponse{JobID: "job-1"},
 	}
 	q := &fakeQueue{}
 	s := newTestServer(&store, q)
@@ -49,6 +67,9 @@ func TestDLQListAndInspect(t *testing.T) {
 	}
 	if inspectResp.Entry.JobID != "job-1" {
 		t.Fatalf("expected job-1, got %q", inspectResp.Entry.JobID)
+	}
+	if inspectResp.Entry.LastError != "boom" || inspectResp.Entry.Attempts != 3 {
+		t.Fatalf("unexpected dlq inspect payload: %+v", inspectResp.Entry)
 	}
 }
 
