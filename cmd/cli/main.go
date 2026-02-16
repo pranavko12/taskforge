@@ -35,7 +35,6 @@ func main() {
 		cmdDLQ(os.Args[2:])
 	// Backward-compatible aliases.
 	case "status":
-	case "cancel":
 		cmdJob(append([]string{"get"}, os.Args[2:]...))
 	case "dlq-list":
 		cmdDLQ(append([]string{"list"}, os.Args[2:]...))
