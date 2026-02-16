@@ -21,6 +21,7 @@ type Store interface {
 type StatsCounts struct {
 	Total   int
 	Pending int
+	Leased  int
 	Failed  int
 	DLQ     int
 }

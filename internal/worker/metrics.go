@@ -9,3 +9,7 @@ func incConcurrencyThrottled(queue string) {
 func incRateThrottled(queue string) {
 	metrics.IncRateThrottled(queue)
 }
+
+func incLeaseTimeouts(queue string) {
+	metrics.IncLeaseTimeouts(queue)
+}

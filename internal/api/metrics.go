@@ -41,3 +41,11 @@ func (p queueDLQProvider) DLQCount(ctx context.Context) (int, error) {
 	}
 	return stats.DLQ, nil
 }
+
+func (p queueDLQProvider) LeasedCount(ctx context.Context) (int, error) {
+	stats, err := p.store.Stats(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return stats.Leased, nil
+}

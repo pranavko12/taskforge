@@ -409,10 +409,11 @@ func (s *PostgresStore) Stats(ctx context.Context) (StatsCounts, error) {
 		SELECT
 			COUNT(1),
 			COUNT(1) FILTER (WHERE state = 'PENDING'),
+			COUNT(1) FILTER (WHERE state = 'IN_PROGRESS'),
 			COUNT(1) FILTER (WHERE state = 'FAILED'),
 			COUNT(1) FILTER (WHERE state = 'DLQ')
 		FROM jobs
-	`).Scan(&counts.Total, &counts.Pending, &counts.Failed, &counts.DLQ)
+	`).Scan(&counts.Total, &counts.Pending, &counts.Leased, &counts.Failed, &counts.DLQ)
 	if err != nil {
 		return StatsCounts{}, err
 	}

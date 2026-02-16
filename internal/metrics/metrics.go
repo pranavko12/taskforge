@@ -68,6 +68,13 @@ var (
 		},
 		[]string{"queue"},
 	)
+	leaseTimeouts = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "taskforge_lease_timeouts_total",
+			Help: "Total lease timeouts detected and requeued.",
+		},
+		[]string{"queue"},
+	)
 )
 
 func Register(reg *prometheus.Registry) {
@@ -81,6 +88,7 @@ func Register(reg *prometheus.Registry) {
 			workerUtilization,
 			concurrencyThrottled,
 			rateThrottled,
+			leaseTimeouts,
 		)
 	})
 }
@@ -117,9 +125,14 @@ func IncRateThrottled(queue string) {
 	rateThrottled.WithLabelValues(queue).Inc()
 }
 
+func IncLeaseTimeouts(queue string) {
+	leaseTimeouts.WithLabelValues(queue).Inc()
+}
+
 type QueueDLQProvider interface {
 	QueueDepth(ctx context.Context) (int64, error)
 	DLQCount(ctx context.Context) (int, error)
+	LeasedCount(ctx context.Context) (int, error)
 }
 
 type QueueDLQCollector struct {
@@ -127,6 +140,7 @@ type QueueDLQCollector struct {
 	provider  QueueDLQProvider
 	depthDesc *prometheus.Desc
 	dlqDesc   *prometheus.Desc
+	leasedDesc *prometheus.Desc
 }
 
 func NewQueueDLQCollector(queueName string, provider QueueDLQProvider) *QueueDLQCollector {
@@ -145,12 +159,19 @@ func NewQueueDLQCollector(queueName string, provider QueueDLQProvider) *QueueDLQ
 			nil,
 			nil,
 		),
+		leasedDesc: prometheus.NewDesc(
+			"taskforge_leased_count",
+			"Current leased (IN_PROGRESS) jobs.",
+			[]string{"queue"},
+			nil,
+		),
 	}
 }
 
 func (c *QueueDLQCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.depthDesc
 	ch <- c.dlqDesc
+	ch <- c.leasedDesc
 }
 
 func (c *QueueDLQCollector) Collect(ch chan<- prometheus.Metric) {
@@ -160,5 +181,8 @@ func (c *QueueDLQCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	if count, err := c.provider.DLQCount(ctx); err == nil {
 		ch <- prometheus.MustNewConstMetric(c.dlqDesc, prometheus.GaugeValue, float64(count))
+	}
+	if count, err := c.provider.LeasedCount(ctx); err == nil {
+		ch <- prometheus.MustNewConstMetric(c.leasedDesc, prometheus.GaugeValue, float64(count), c.queueName)
 	}
 }

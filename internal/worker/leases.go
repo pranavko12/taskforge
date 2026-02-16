@@ -49,6 +49,7 @@ func (r *LeaseReaper) RequeueExpiredLeases(ctx context.Context, now time.Time) (
 		if err := r.queue.Enqueue(ctx, r.queueName, id); err != nil {
 			return 0, err
 		}
+		incLeaseTimeouts(r.queueName)
 	}
 	return len(ids), nil
 }
