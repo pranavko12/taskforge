@@ -139,16 +139,20 @@ API:
 Exposed at `GET /metrics` in Prometheus format.
 
 Core metrics:
-- `taskforge_queue_depth{queue}`
-- `taskforge_dlq_count`
-- `taskforge_job_attempts_total{queue}`
-- `taskforge_job_success_total{queue}`
-- `taskforge_job_failure_total{queue}`
-- `taskforge_job_runtime_seconds_bucket{queue,...}`
-- `taskforge_job_time_in_queue_seconds_bucket{queue,...}`
-- `taskforge_worker_utilization{queue}`
-- `taskforge_worker_concurrency_throttled_total{queue}`
-- `taskforge_worker_rate_throttled_total{queue}`
+- `taskforge_queue_depth{queue}` gauge
+- `taskforge_leased_count{queue}` gauge
+- `taskforge_dlq_count` gauge
+- `taskforge_job_runtime_seconds{queue}` histogram (`_bucket`, `_sum`, `_count`)
+- `taskforge_job_success_total{queue}` counter
+- `taskforge_job_failure_total{queue}` counter
+- `taskforge_lease_timeouts_total{queue}` counter
+- `taskforge_worker_utilization{queue}` gauge
+- `taskforge_worker_concurrency_throttled_total{queue}` counter
+- `taskforge_worker_rate_throttled_total{queue}` counter
+
+Stable labels:
+- `queue`: Redis queue name (for queue/worker/job execution metrics).
+- No labels on `taskforge_dlq_count` (global DLQ size).
 
 ---
 
