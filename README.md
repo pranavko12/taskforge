@@ -174,11 +174,10 @@ Build or run via `go run ./cmd/cli`.
 
 Examples:
 ```
-taskforge-cli enqueue --job-type email --idempotency-key abc123 --payload '{"to":"a@b.com"}'
-taskforge-cli status --id 7b5b4f8e-2a7d-4e6f-9d5b-3a6b7f9a0c12
-taskforge-cli cancel --id 7b5b4f8e-2a7d-4e6f-9d5b-3a6b7f9a0c12 --reason "user requested"
-taskforge-cli dlq-list --limit 20
-taskforge-cli dlq-replay --id 7b5b4f8e-2a7d-4e6f-9d5b-3a6b7f9a0c12
+taskforge enqueue --job-type email --idempotency-key abc123 --payload '{"to":"a@b.com"}'
+taskforge job get --id 7b5b4f8e-2a7d-4e6f-9d5b-3a6b7f9a0c12
+taskforge dlq list --limit 20
+taskforge dlq replay --id 7b5b4f8e-2a7d-4e6f-9d5b-3a6b7f9a0c12
 ```
 
 ---
