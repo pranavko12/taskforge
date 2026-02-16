@@ -136,10 +136,10 @@ type QueueDLQProvider interface {
 }
 
 type QueueDLQCollector struct {
-	queueName string
-	provider  QueueDLQProvider
-	depthDesc *prometheus.Desc
-	dlqDesc   *prometheus.Desc
+	queueName  string
+	provider   QueueDLQProvider
+	depthDesc  *prometheus.Desc
+	dlqDesc    *prometheus.Desc
 	leasedDesc *prometheus.Desc
 }
 

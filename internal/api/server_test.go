@@ -9,9 +9,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/pranavko12/taskforge/internal/config"
+	"github.com/pranavko12/taskforge/internal/metrics"
 )
 
 func TestHealthzAlwaysOK(t *testing.T) {
@@ -290,6 +292,38 @@ func TestStatsOK(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestMetricsEndpointIncludesStableMetricNames(t *testing.T) {
+	store := fakeStore{statsCounts: StatsCounts{Total: 2, Pending: 1, Leased: 1, Failed: 0, DLQ: 1}}
+	q := &fakeQueue{enqueued: []string{"job-1", "job-2"}}
+	s := newTestServer(&store, q)
+	metrics.ObserveRuntime(testConfig().QueueName, 0.02)
+	metrics.IncSuccess(testConfig().QueueName)
+	metrics.IncFailure(testConfig().QueueName)
+	metrics.IncLeaseTimeouts(testConfig().QueueName)
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	for _, name := range []string{
+		"taskforge_queue_depth",
+		"taskforge_leased_count",
+		"taskforge_job_runtime_seconds",
+		"taskforge_job_success_total",
+		"taskforge_job_failure_total",
+		"taskforge_lease_timeouts_total",
+	} {
+		if !strings.Contains(body, name) {
+			t.Fatalf("expected metrics output to include %q", name)
+		}
 	}
 }
 
