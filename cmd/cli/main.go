@@ -29,14 +29,18 @@ func main() {
 	switch os.Args[1] {
 	case "enqueue":
 		cmdEnqueue(os.Args[2:])
+	case "job":
+		cmdJob(os.Args[2:])
+	case "dlq":
+		cmdDLQ(os.Args[2:])
+	// Backward-compatible aliases.
 	case "status":
-		cmdStatus(os.Args[2:])
 	case "cancel":
-		cmdCancel(os.Args[2:])
+		cmdJob(append([]string{"get"}, os.Args[2:]...))
 	case "dlq-list":
-		cmdDLQList(os.Args[2:])
+		cmdDLQ(append([]string{"list"}, os.Args[2:]...))
 	case "dlq-replay":
-		cmdDLQReplay(os.Args[2:])
+		cmdDLQ(append([]string{"replay"}, os.Args[2:]...))
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -47,17 +51,16 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Print(`taskforge-cli
+	fmt.Print(`taskforge
 
 Usage:
-  taskforge-cli <command> [flags]
+  taskforge <command> [flags]
 
 Commands:
-  enqueue     Submit a job
-  status      Get job status
-  cancel      Cancel a job (moves to DLQ with reason)
-  dlq-list    List DLQ entries
-  dlq-replay  Replay a DLQ job
+  enqueue      Submit a job
+  job get      Get job status
+  dlq list     List DLQ entries
+  dlq replay   Replay a DLQ job
 
 Global flags:
   --api string   Base API URL (default from TASKFORGE_API or http://localhost:8080)
@@ -124,8 +127,8 @@ func cmdEnqueue(args []string) {
 	fmt.Println(string(resp))
 }
 
-func cmdStatus(args []string) {
-	fs := flag.NewFlagSet("status", flag.ExitOnError)
+func cmdJobGet(args []string) {
+	fs := flag.NewFlagSet("job get", flag.ExitOnError)
 	api := apiBase(fs)
 	jobID := fs.String("id", "", "Job ID")
 	if err := fs.Parse(args); err != nil {
@@ -146,32 +149,8 @@ func cmdStatus(args []string) {
 	fmt.Println(string(resp))
 }
 
-func cmdCancel(args []string) {
-	fs := flag.NewFlagSet("cancel", flag.ExitOnError)
-	api := apiBase(fs)
-	jobID := fs.String("id", "", "Job ID")
-	reason := fs.String("reason", "canceled", "Cancel reason")
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
-	}
-	if *jobID == "" {
-		fmt.Fprintln(os.Stderr, "id is required")
-		fs.Usage()
-		os.Exit(2)
-	}
-
-	body, _ := json.Marshal(map[string]string{"reason": *reason})
-	_, err := httpPost(*api+"/jobs/"+*jobID+"/cancel", body)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	fmt.Println("ok")
-}
-
 func cmdDLQList(args []string) {
-	fs := flag.NewFlagSet("dlq-list", flag.ExitOnError)
+	fs := flag.NewFlagSet("dlq list", flag.ExitOnError)
 	api := apiBase(fs)
 	limit := fs.Int("limit", 50, "Limit")
 	offset := fs.Int("offset", 0, "Offset")
@@ -190,7 +169,7 @@ func cmdDLQList(args []string) {
 }
 
 func cmdDLQReplay(args []string) {
-	fs := flag.NewFlagSet("dlq-replay", flag.ExitOnError)
+	fs := flag.NewFlagSet("dlq replay", flag.ExitOnError)
 	api := apiBase(fs)
 	jobID := fs.String("id", "", "Job ID")
 	if err := fs.Parse(args); err != nil {
@@ -209,6 +188,40 @@ func cmdDLQReplay(args []string) {
 		os.Exit(1)
 	}
 	fmt.Println("ok")
+}
+
+func cmdJob(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "job subcommand required: get")
+		printUsage()
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "get":
+		cmdJobGet(args[1:])
+	default:
+		fmt.Fprintf(os.Stderr, "unknown job subcommand: %s\n", args[0])
+		printUsage()
+		os.Exit(2)
+	}
+}
+
+func cmdDLQ(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "dlq subcommand required: list|replay")
+		printUsage()
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "list":
+		cmdDLQList(args[1:])
+	case "replay":
+		cmdDLQReplay(args[1:])
+	default:
+		fmt.Fprintf(os.Stderr, "unknown dlq subcommand: %s\n", args[0])
+		printUsage()
+		os.Exit(2)
+	}
 }
 
 func readPayload(inline string, file string) ([]byte, error) {
