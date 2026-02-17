@@ -280,6 +280,9 @@ func TestJobEventsOrdering(t *testing.T) {
 
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	t.Cleanup(func() { _ = rdb.Close() })
+	if err := rdb.Del(ctx, cfg.QueueName).Err(); err != nil {
+		t.Fatalf("clear queue: %v", err)
+	}
 
 	if err := applyMigrations(ctx, pool, "../../migrations"); err != nil {
 		t.Fatalf("migrate: %v", err)
