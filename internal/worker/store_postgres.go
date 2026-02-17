@@ -2,9 +2,11 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -18,8 +20,14 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 }
 
 func (s *PostgresStore) LeaseNextJob(ctx context.Context, queueName string, leaseID string, now time.Time, leaseFor time.Duration) (string, bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	var jobID string
-	err := s.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		WITH candidate AS (
 			SELECT job_id
 			FROM jobs
@@ -47,11 +55,26 @@ func (s *PostgresStore) LeaseNextJob(ctx context.Context, queueName string, leas
 		}
 		return "", false, err
 	}
+	if err := appendJobEventTx(ctx, tx, jobID, "leased", nil); err != nil {
+		return "", false, err
+	}
+	if err := appendJobEventTx(ctx, tx, jobID, "running", nil); err != nil {
+		return "", false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", false, err
+	}
 	return jobID, true, nil
 }
 
 func (s *PostgresStore) AcquireLease(ctx context.Context, jobID string, owner string, now time.Time, leaseFor time.Duration) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE jobs
 		SET state = 'IN_PROGRESS',
 			attempt_count = attempt_count + 1,
@@ -66,7 +89,19 @@ func (s *PostgresStore) AcquireLease(ctx context.Context, jobID string, owner st
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() == 1, nil
+	if tag.RowsAffected() != 1 {
+		return false, nil
+	}
+	if err := appendJobEventTx(ctx, tx, jobID, "leased", nil); err != nil {
+		return false, err
+	}
+	if err := appendJobEventTx(ctx, tx, jobID, "running", nil); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *PostgresStore) RenewLease(ctx context.Context, jobID string, leaseID string, extendBy time.Duration) (bool, error) {
@@ -82,11 +117,23 @@ func (s *PostgresStore) RenewLease(ctx context.Context, jobID string, leaseID st
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() == 1, nil
+	if tag.RowsAffected() == 1 {
+		if err := appendJobEvent(ctx, s.pool, jobID, "heartbeat", nil); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 func (s *PostgresStore) MarkJobSucceeded(ctx context.Context, jobID string, leaseID string) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE jobs
 		SET state = 'COMPLETED',
 			lease_owner = NULL,
@@ -101,11 +148,26 @@ func (s *PostgresStore) MarkJobSucceeded(ctx context.Context, jobID string, leas
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() == 1, nil
+	if tag.RowsAffected() != 1 {
+		return false, nil
+	}
+	if err := appendJobEventTx(ctx, tx, jobID, "succeeded", nil); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *PostgresStore) MarkJobFailed(ctx context.Context, jobID string, leaseID string, lastError string) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE jobs
 		SET state = 'FAILED',
 			lease_owner = NULL,
@@ -119,7 +181,17 @@ func (s *PostgresStore) MarkJobFailed(ctx context.Context, jobID string, leaseID
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() == 1, nil
+	if tag.RowsAffected() != 1 {
+		return false, nil
+	}
+	payload := map[string]string{"last_error": lastError}
+	if err := appendJobEventTx(ctx, tx, jobID, "failed", payload); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *PostgresStore) MarkJobTerminal(ctx context.Context, jobID string, leaseID string, lastError string) (bool, error) {
@@ -176,6 +248,10 @@ func (s *PostgresStore) MarkJobTerminal(ctx context.Context, jobID string, lease
 	`, jobID, reason); err != nil {
 		return false, err
 	}
+	payload := map[string]string{"reason": reason, "last_error": lastError}
+	if err := appendJobEventTx(ctx, tx, jobID, "dlq", payload); err != nil {
+		return false, err
+	}
 
 	err = tx.Commit(ctx)
 	if err != nil {
@@ -230,4 +306,28 @@ func (s *PostgresStore) GetTraceparent(ctx context.Context, jobID string) (strin
 	var traceparent string
 	err := s.pool.QueryRow(ctx, `SELECT COALESCE(traceparent, '') FROM jobs WHERE job_id = $1`, jobID).Scan(&traceparent)
 	return traceparent, err
+}
+
+type pgxExec interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
+func appendJobEvent(ctx context.Context, exec pgxExec, jobID string, eventType string, payload any) error {
+	payloadBytes := []byte("{}")
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		payloadBytes = encoded
+	}
+	_, err := exec.Exec(ctx, `
+		INSERT INTO job_events (job_id, event_type, payload)
+		VALUES ($1, $2, $3::jsonb)
+	`, jobID, eventType, string(payloadBytes))
+	return err
+}
+
+func appendJobEventTx(ctx context.Context, tx pgx.Tx, jobID string, eventType string, payload any) error {
+	return appendJobEvent(ctx, tx, jobID, eventType, payload)
 }

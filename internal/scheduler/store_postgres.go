@@ -128,6 +128,13 @@ func (s *PostgresStore) MarkTerminalFailure(ctx context.Context, jobID string, r
 	if err != nil {
 		return err
 	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO job_events (job_id, event_type, payload)
+		VALUES ($1, 'dlq', jsonb_build_object('reason', $2))
+	`, jobID, reason)
+	if err != nil {
+		return err
+	}
 
 	if err = tx.Commit(ctx); err != nil {
 		return err

@@ -138,6 +138,10 @@ func (s *PostgresStore) InsertDLQEntry(ctx context.Context, jobID string, reason
 	if tag.RowsAffected() == 0 {
 		return errNotFound
 	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO job_events (job_id, event_type, payload)
+		VALUES ($1, 'dlq', jsonb_build_object('reason', $2))
+	`, jobID, reason)
 	return err
 }
 
