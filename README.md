@@ -118,6 +118,7 @@ Core behaviors:
 - Worker leases with visibility timeouts and heartbeat-based renewal.
 - Failure classification: retryable failures transition to `FAILED`; terminal failures transition to `DLQ`.
 - Concurrency limits and optional rate limiting per queue.
+- Append-only `job_events` audit trail records: `leased`, `running`, `heartbeat`, `succeeded`, `failed`, `dlq`.
 
 ---
 
