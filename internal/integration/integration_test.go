@@ -257,6 +257,107 @@ func TestDLQReplayResetsCountersAndSchedule(t *testing.T) {
 	}
 }
 
+func TestJobEventsOrdering(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Config{
+		HTTPAddr:          ":0",
+		QueueName:         env("QUEUE_NAME", "jobs:ready"),
+		UIDir:             "./internal/api/ui",
+		LogLevel:          "info",
+		PostgresDSN:       env("POSTGRES_DSN", "postgres://taskforge:taskforge@localhost:5432/taskforge?sslmode=disable"),
+		RedisAddr:         env("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:     "",
+		RedisDB:           0,
+		WorkerConcurrency: 1,
+		RateLimitPerSec:   0,
+	}
+
+	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
+	if err != nil {
+		t.Fatalf("postgres connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	if err := applyMigrations(ctx, pool, "../../migrations"); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	store := api.NewPostgresStore(pool)
+	q := queue.NewRedis(cfg)
+	srv := api.NewServer(cfg, store, q, nil, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	testServer := httptest.NewServer(srv.Handler())
+	t.Cleanup(testServer.Close)
+
+	jobID := enqueueJob(t, testServer.URL)
+
+	pop, err := rdb.BRPop(ctx, 5*time.Second, cfg.QueueName).Result()
+	if err != nil || len(pop) != 2 {
+		t.Fatalf("queue pop: %v %v", err, pop)
+	}
+	if pop[1] != jobID {
+		t.Fatalf("expected %s, got %s", jobID, pop[1])
+	}
+
+	leaseStore := worker.NewPostgresStore(pool)
+	ok, err := leaseStore.AcquireLease(ctx, jobID, "worker-events", time.Now().UTC(), 80*time.Millisecond)
+	if err != nil || !ok {
+		t.Fatalf("acquire lease: %v ok=%v", err, ok)
+	}
+
+	loop := worker.NewLoop(leaseStore, cfg.QueueName, "worker-events", 80*time.Millisecond)
+	if err := loop.ProcessOne(context.Background(), jobID, func(ctx context.Context, id string) error {
+		time.Sleep(180 * time.Millisecond)
+		return nil
+	}); err != nil {
+		t.Fatalf("process one: %v", err)
+	}
+
+	rows, err := pool.Query(ctx, `
+		SELECT event_type
+		FROM job_events
+		WHERE job_id = $1
+		ORDER BY event_id ASC
+	`, jobID)
+	if err != nil {
+		t.Fatalf("query events: %v", err)
+	}
+	defer rows.Close()
+
+	var events []string
+	for rows.Next() {
+		var event string
+		if err := rows.Scan(&event); err != nil {
+			t.Fatalf("scan event: %v", err)
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows err: %v", err)
+	}
+	if len(events) < 4 {
+		t.Fatalf("expected at least 4 events, got %v", events)
+	}
+	if events[0] != "leased" || events[1] != "running" {
+		t.Fatalf("expected leased->running prefix, got %v", events)
+	}
+	if events[len(events)-1] != "succeeded" {
+		t.Fatalf("expected last event succeeded, got %v", events[len(events)-1])
+	}
+	heartbeatSeen := false
+	for _, event := range events[2 : len(events)-1] {
+		if event == "heartbeat" {
+			heartbeatSeen = true
+			break
+		}
+	}
+	if !heartbeatSeen {
+		t.Fatalf("expected heartbeat before succeeded, got %v", events)
+	}
+}
+
 func enqueueJob(t *testing.T, baseURL string) string {
 	t.Helper()
 	body := `{"jobType":"test","payload":{"ok":true},"idempotencyKey":"it-001"}`
