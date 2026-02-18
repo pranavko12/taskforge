@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,6 +25,8 @@ import (
 	"github.com/pranavko12/taskforge/internal/api"
 	"github.com/pranavko12/taskforge/internal/config"
 	"github.com/pranavko12/taskforge/internal/queue"
+	"github.com/pranavko12/taskforge/internal/retry"
+	"github.com/pranavko12/taskforge/internal/scheduler"
 	"github.com/pranavko12/taskforge/internal/worker"
 )
 
@@ -361,9 +364,142 @@ func TestJobEventsOrdering(t *testing.T) {
 	}
 }
 
+func TestIntegrationSuccessThenRetryDlqReplay(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Config{
+		HTTPAddr:          ":0",
+		QueueName:         env("QUEUE_NAME", "jobs:ready"),
+		UIDir:             "./internal/api/ui",
+		LogLevel:          "info",
+		PostgresDSN:       env("POSTGRES_DSN", "postgres://taskforge:taskforge@localhost:5432/taskforge?sslmode=disable"),
+		RedisAddr:         env("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:     "",
+		RedisDB:           0,
+		WorkerConcurrency: 1,
+		RateLimitPerSec:   0,
+	}
+
+	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
+	if err != nil {
+		t.Fatalf("postgres connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+	t.Cleanup(func() { _ = rdb.Close() })
+	if err := rdb.Del(ctx, cfg.QueueName).Err(); err != nil {
+		t.Fatalf("clear queue: %v", err)
+	}
+
+	if err := applyMigrations(ctx, pool, "../../migrations"); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	store := api.NewPostgresStore(pool)
+	q := queue.NewRedis(cfg)
+	srv := api.NewServer(cfg, store, q, nil, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	testServer := httptest.NewServer(srv.Handler())
+	t.Cleanup(testServer.Close)
+
+	leaseStore := worker.NewPostgresStore(pool)
+	loop := worker.NewLoop(leaseStore, cfg.QueueName, "worker-it-flow", 80*time.Millisecond)
+	retryScheduler := scheduler.New(scheduler.NewPostgresStore(pool), q, cfg.QueueName)
+
+	// Success path: enqueue -> execute -> succeeded.
+	successJobID := enqueueJob(t, testServer.URL)
+	popSuccess, err := rdb.BRPop(ctx, 5*time.Second, cfg.QueueName).Result()
+	if err != nil || len(popSuccess) != 2 {
+		t.Fatalf("queue pop success: %v %v", err, popSuccess)
+	}
+	if popSuccess[1] != successJobID {
+		t.Fatalf("expected %s, got %s", successJobID, popSuccess[1])
+	}
+	ok, err := leaseStore.AcquireLease(ctx, successJobID, "worker-it-flow", time.Now().UTC(), 80*time.Millisecond)
+	if err != nil || !ok {
+		t.Fatalf("acquire success lease: %v ok=%v", err, ok)
+	}
+	if err := loop.ProcessOne(context.Background(), successJobID, func(context.Context, string) error { return nil }); err != nil {
+		t.Fatalf("process success job: %v", err)
+	}
+	successStatus := getJobStatus(t, testServer.URL, successJobID)
+	if successStatus.State != "COMPLETED" {
+		t.Fatalf("expected COMPLETED, got %s", successStatus.State)
+	}
+
+	// Failure path: enqueue -> fail -> retry -> fail -> dlq -> replay.
+	failBody := `{"jobType":"test","payload":{"ok":false},"idempotencyKey":"it-fail-001","maxAttempts":2,"initialDelay":1,"backoff":1,"maxDelay":1,"jitter":false}`
+	failJobID := enqueueJobWithBody(t, testServer.URL, failBody)
+
+	popFail, err := rdb.BRPop(ctx, 5*time.Second, cfg.QueueName).Result()
+	if err != nil || len(popFail) != 2 {
+		t.Fatalf("queue pop fail attempt1: %v %v", err, popFail)
+	}
+	if popFail[1] != failJobID {
+		t.Fatalf("expected %s, got %s", failJobID, popFail[1])
+	}
+	ok, err = leaseStore.AcquireLease(ctx, failJobID, "worker-it-flow", time.Now().UTC(), 80*time.Millisecond)
+	if err != nil || !ok {
+		t.Fatalf("acquire fail attempt1 lease: %v ok=%v", err, ok)
+	}
+	if err := loop.ProcessOne(context.Background(), failJobID, func(context.Context, string) error {
+		return retry.Retryable(errors.New("temporary upstream error"))
+	}); err != nil {
+		t.Fatalf("process fail attempt1: %v", err)
+	}
+
+	now := time.Now().UTC()
+	if _, err := retryScheduler.ScheduleRetry(ctx, failJobID, now, 1); err != nil {
+		t.Fatalf("schedule retry: %v", err)
+	}
+	if _, err := retryScheduler.EnqueueDueRetries(ctx, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("enqueue due retries: %v", err)
+	}
+
+	popRetry, err := rdb.BRPop(ctx, 5*time.Second, cfg.QueueName).Result()
+	if err != nil || len(popRetry) != 2 {
+		t.Fatalf("queue pop fail attempt2: %v %v", err, popRetry)
+	}
+	if popRetry[1] != failJobID {
+		t.Fatalf("expected %s, got %s", failJobID, popRetry[1])
+	}
+	ok, err = leaseStore.AcquireLease(ctx, failJobID, "worker-it-flow", time.Now().UTC(), 80*time.Millisecond)
+	if err != nil || !ok {
+		t.Fatalf("acquire fail attempt2 lease: %v ok=%v", err, ok)
+	}
+	if err := loop.ProcessOne(context.Background(), failJobID, func(context.Context, string) error {
+		return retry.Retryable(errors.New("temporary upstream error"))
+	}); err != nil {
+		t.Fatalf("process fail attempt2: %v", err)
+	}
+
+	if _, err := retryScheduler.ScheduleRetry(ctx, failJobID, now.Add(3*time.Second), 1); !errors.Is(err, scheduler.ErrMaxAttemptsExceeded) {
+		t.Fatalf("expected max attempts exceeded, got %v", err)
+	}
+	failStatus := getJobStatus(t, testServer.URL, failJobID)
+	if failStatus.State != "DLQ" {
+		t.Fatalf("expected DLQ, got %s", failStatus.State)
+	}
+
+	if _, err := httpPost(testServer.URL+"/dlq/"+failJobID+"/replay", nil); err != nil {
+		t.Fatalf("replay failed job: %v", err)
+	}
+	replayedStatus := getJobStatus(t, testServer.URL, failJobID)
+	if replayedStatus.State != "PENDING" {
+		t.Fatalf("expected PENDING after replay, got %s", replayedStatus.State)
+	}
+	if replayedStatus.RetryCount != 0 || replayedStatus.AttemptCount != 0 {
+		t.Fatalf("expected counters reset after replay, got retry=%d attempt=%d", replayedStatus.RetryCount, replayedStatus.AttemptCount)
+	}
+}
+
 func enqueueJob(t *testing.T, baseURL string) string {
 	t.Helper()
 	body := `{"jobType":"test","payload":{"ok":true},"idempotencyKey":"it-001"}`
+	return enqueueJobWithBody(t, baseURL, body)
+}
+
+func enqueueJobWithBody(t *testing.T, baseURL, body string) string {
+	t.Helper()
 	resp, err := httpPost(baseURL+"/jobs", []byte(body))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
