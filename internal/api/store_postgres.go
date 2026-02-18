@@ -140,7 +140,7 @@ func (s *PostgresStore) InsertDLQEntry(ctx context.Context, jobID string, reason
 	}
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO job_events (job_id, event_type, payload)
-		VALUES ($1, 'dlq', jsonb_build_object('reason', $2))
+		VALUES ($1, 'dlq', jsonb_build_object('reason', $2::text))
 	`, jobID, reason)
 	return err
 }
