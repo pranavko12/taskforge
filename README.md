@@ -190,7 +190,11 @@ Run end-to-end tests with Docker:
 bash scripts/integration-test.sh
 ```
 
-This spins up Postgres and Redis via docker-compose and runs an enqueue -> execute -> status flow.
+This single command is used both locally and in CI. It brings up `postgres`, `redis`, `api`, and `worker` via `docker-compose.integration.yml`, then runs integration tests.
+
+Current integration coverage includes:
+- enqueue -> execute -> succeed
+- enqueue failing -> retry scheduling -> DLQ -> replay
 
 ---
 
