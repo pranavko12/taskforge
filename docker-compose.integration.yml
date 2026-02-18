@@ -22,3 +22,37 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    environment:
+      APP_ENV: integration
+      POSTGRES_DSN: postgres://taskforge:taskforge@postgres:5432/taskforge?sslmode=disable
+      REDIS_ADDR: redis:6379
+      HTTP_ADDR: :8080
+      UI_DIR: /app/ui
+      QUEUE_NAME: jobs:ready
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    environment:
+      APP_ENV: integration
+      POSTGRES_DSN: postgres://taskforge:taskforge@postgres:5432/taskforge?sslmode=disable
+      REDIS_ADDR: redis:6379
+      WORKER_CONCURRENCY: "1"
+      # Keep worker on a separate queue so it does not race integration test control flow.
+      QUEUE_NAME: jobs:worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
