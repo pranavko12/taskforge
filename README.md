@@ -1,80 +1,43 @@
-# TaskForge - Distributed Job Queue & Scheduler
+# TaskForge - Distributed Job Queue and Scheduler (v2)
 
-TaskForge is a fault-tolerant distributed job queue and scheduler designed to execute asynchronous tasks reliably at scale. The system targets at-least-once delivery, retries with exponential backoff, worker leases with visibility timeouts, and full observability via logs, metrics, and tracing.
+TaskForge is a fault-tolerant background job system using Postgres + Redis with lease-based workers, deterministic retries, DLQ handling, append-only event audit, and Prometheus metrics.
 
----
-
-## API Endpoints
-
-- GET `/healthz` (liveness; always 200 if process is up)
-- GET `/readyz` (readiness; checks Postgres + Redis)
-- GET `/stats`
-- GET `/jobs`
-- POST `/jobs`
-- POST `/jobs` with an existing `idempotencyKey` returns the existing job id
-- GET `/jobs/{id}`
-- GET `/queues/{q}/jobs?status=...`
-- POST `/jobs/{id}/retry`
-- POST `/jobs/{id}/dlq` (optional body: `{ "reason": "..." }`)
-- POST `/jobs/{id}/cancel` (optional body: `{ "reason": "..." }`)
-- GET `/dlq`
-- GET `/dlq/{id}`
-- POST `/dlq/{id}/replay`
-- GET `/metrics`
-
-All error responses use a consistent JSON shape: `{ "code": "...", "message": "...", "details": ... }`.
-Each response includes an `X-Request-ID` header for tracing.
-
-`GET /jobs` and `GET /queues/{q}/jobs` pagination:
-- Query params: `limit` (default `50`, hard max `200`), `offset` (default `0`).
-- Values above max are clamped; negative offsets are normalized to `0`.
-- `GET /queues/{q}/jobs` supports `status` (mapped to lifecycle state filter).
-- `GET /jobs/{id}` is a single-resource lookup and is not paginated.
+## v2 Scope (Completed)
+- Config/env validation with fail-fast startup.
+- Health endpoints: `/healthz`, `/readyz` (Postgres + Redis readiness).
+- Structured JSON logs + `X-Request-ID`.
+- Standard API error shape: `{code,message,details}`.
+- Job lifecycle fields, transition enforcement, idempotency per queue.
+- Concurrency-safe leasing (`FOR UPDATE SKIP LOCKED`) + lease renewal.
+- Retry scheduling + failure classification (`retryable` vs `terminal`).
+- DLQ storage and replay.
+- Append-only `job_events`.
+- CLI commands (`enqueue`, `job get`, `dlq list`, `dlq replay`).
+- Integration harness via docker-compose with one command for local and CI.
 
 ---
 
-## curl Examples
+## Quickstart
 
-Health and readiness:
+1) Copy env template:
 ```bash
-curl -i http://localhost:8080/healthz
-curl -i http://localhost:8080/readyz
+cp env.example .env
 ```
 
-Enqueue a job:
+2) Start core services:
 ```bash
-curl -sS -X POST http://localhost:8080/jobs \
-  -H "Content-Type: application/json" \
-  -d '{"jobType":"email","payload":{"to":"a@b.com"},"idempotencyKey":"abc-123"}'
+docker compose up --build postgres redis api worker
 ```
 
-Get job status:
+3) Smoke check:
 ```bash
-curl -sS http://localhost:8080/jobs/<job-id>
+curl -i http://localhost:8081/healthz
+curl -i http://localhost:8081/readyz
 ```
 
-List jobs for a queue/status:
-```bash
-curl -sS "http://localhost:8080/queues/jobs:ready/jobs?status=PENDING&limit=50&offset=0"
-```
-
-Cancel a job:
-```bash
-curl -sS -X POST http://localhost:8080/jobs/<job-id>/cancel \
-  -H "Content-Type: application/json" \
-  -d '{"reason":"user requested"}'
-```
-
-List DLQ and replay:
-```bash
-curl -sS "http://localhost:8080/dlq?limit=20&offset=0"
-curl -sS -X POST http://localhost:8080/dlq/<job-id>/replay
-```
-
-Prometheus metrics:
-```bash
-curl -sS http://localhost:8080/metrics
-```
+Notes:
+- In `docker-compose.yml`, API is published as `localhost:8081`.
+- Use `.env`/environment variables to configure DSNs and queue settings.
 
 ---
 
@@ -89,92 +52,114 @@ Common:
 - `REDIS_ADDR` (default `localhost:6379`)
 - `REDIS_DB` (default `0`)
 - `REDIS_PASSWORD` (default empty)
-- `LOG_LEVEL` (debug|info|warn|error, default `info`)
+- `LOG_LEVEL` (`debug|info|warn|error`, default `info`)
 - `WORKER_CONCURRENCY` (default `10`)
 - `RATE_LIMIT_PER_SEC` (default `0`, disabled)
 - `TRACING_ENABLED` (default `false`)
-- `TRACING_EXPORTER` (stdout|none, default `stdout`)
+- `TRACING_EXPORTER` (`stdout|none`, default `stdout`)
 
-Config is validated at startup and fails fast with a readable error if invalid.
-
----
-
-## Logging and Request IDs
-
-- Structured JSON logging with request metadata (method, path, status, latency).
-- `X-Request-ID` is generated if missing and returned on every response.
+Startup validates environment and returns explicit errors when invalid.
 
 ---
 
-## Job Lifecycle and Reliability
+## Data Model and Lifecycle
 
-State machine is enforced in the database and code.
+`jobs` includes lifecycle and retry fields:
+- `state`, `attempt_count`, `max_attempts`, `next_run_at`
+- `lease_owner`, `lease_expires_at`
+- `last_error`
+- retry policy: `initial_delay`, `backoff`, `max_delay`, `jitter`
 
-Core behaviors:
-- Idempotency keys on job creation (reused keys return existing job).
-- Retries with exponential backoff via policy fields: `maxAttempts`, `initialDelay`, `backoff`, `maxDelay`, `jitter`.
-- In v2, jitter is off by default (`jitter=false`) for deterministic scheduling.
-- Scheduler computes `next_run_at` from attempt number and retry policy.
-- Worker leases with visibility timeouts and heartbeat-based renewal.
-- Failure classification: retryable failures transition to `FAILED`; terminal failures transition to `DLQ`.
-- Concurrency limits and optional rate limiting per queue.
-- Append-only `job_events` audit trail records: `leased`, `running`, `heartbeat`, `succeeded`, `failed`, `dlq`.
+State machine is enforced in DB/code.
 
----
+Retry policy:
+- Deterministic exponential backoff with `maxAttempts`, `initialDelay`, `backoff`, `maxDelay`.
+- v2 keeps jitter off by default (`jitter=false`).
 
-## Dead-Letter Queue (DLQ)
+Failure classification:
+- Retryable failures -> `FAILED` (eligible for scheduler retry).
+- Terminal failures -> `DLQ`.
 
-- DLQ is stored in Postgres table `dead_letters`.
-- Each entry stores `job_id`, job `payload`, `reason`, `last_error`, `attempts`, and timestamps (`failed_at`, `created_at`, `updated_at`).
-- Replay re-enqueues the job and resets execution state (`retry_count=0`, `attempt_count=0`, `state=PENDING`, `next_run_at=NOW()`).
+Idempotency:
+- Unique per queue (`queue_name`, `idempotency_key`).
+- Duplicate submission returns existing job.
 
-API:
-- GET `/dlq`
-- GET `/dlq/{id}`
-- POST `/dlq/{id}/replay`
+Append-only events:
+- `job_events` records: `leased`, `running`, `heartbeat`, `succeeded`, `failed`, `dlq`.
 
 ---
 
-## Metrics
+## DLQ
 
-Exposed at `GET /metrics` in Prometheus format.
+DLQ is persisted in `dead_letters`:
+- `job_id`, `queue_name`, `job_type`, `payload`
+- `reason`, `last_error`, `attempts`
+- `failed_at`, `created_at`, `updated_at`
 
-Core metrics:
-- `taskforge_queue_depth{queue}` gauge
-- `taskforge_leased_count{queue}` gauge
-- `taskforge_dlq_count` gauge
-- `taskforge_job_runtime_seconds{queue}` histogram (`_bucket`, `_sum`, `_count`)
-- `taskforge_job_success_total{queue}` counter
-- `taskforge_job_failure_total{queue}` counter
-- `taskforge_lease_timeouts_total{queue}` counter
-- `taskforge_worker_utilization{queue}` gauge
-- `taskforge_worker_concurrency_throttled_total{queue}` counter
-- `taskforge_worker_rate_throttled_total{queue}` counter
-
-Stable labels:
-- `queue`: Redis queue name (for queue/worker/job execution metrics).
-- No labels on `taskforge_dlq_count` (global DLQ size).
+Replay behavior:
+- Re-enqueues job.
+- Resets `state=PENDING`, `retry_count=0`, `attempt_count=0`, `next_run_at=NOW()`.
 
 ---
 
-## Tracing
+## HTTP API
 
-OpenTelemetry tracing is a thin slice and disabled by default. When enabled, trace context is propagated from API -> scheduler -> worker via `traceparent`.
+Core:
+- `GET /healthz`
+- `GET /readyz`
+- `GET /metrics`
+- `GET /stats`
 
-Config:
-- `TRACING_ENABLED=true`
-- `TRACING_EXPORTER=stdout` (writes spans to stdout)
+Jobs:
+- `POST /jobs`
+- `GET /jobs`
+- `GET /jobs/{id}`
+- `GET /queues/{q}/jobs?status=...`
+- `POST /jobs/{id}/retry`
+- `POST /jobs/{id}/dlq`
+- `POST /jobs/{id}/cancel`
 
-Logs include `trace_id` when tracing is enabled. Spans include `job_id` and `queue` attributes.
+DLQ:
+- `GET /dlq`
+- `GET /dlq/{id}`
+- `POST /dlq/{id}/replay`
+
+Conventions:
+- Error shape is always `{ "code": "...", "message": "...", "details": ... }`.
+- `X-Request-ID` is returned on every response.
+
+Pagination:
+- `GET /jobs` and `GET /queues/{q}/jobs` support `limit`/`offset`.
+- Default `limit=50`, hard max `200`, negative offsets normalized to `0`.
 
 ---
 
-## CLI
+## curl Examples
 
-Build or run via `go run ./cmd/cli`.
+```bash
+# enqueue
+curl -sS -X POST http://localhost:8081/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"jobType":"email","payload":{"to":"a@b.com"},"idempotencyKey":"abc-123"}'
 
-Examples:
+# get job
+curl -sS http://localhost:8081/jobs/<job-id>
+
+# list queue jobs
+curl -sS "http://localhost:8081/queues/jobs:ready/jobs?status=PENDING&limit=50&offset=0"
+
+# dlq list and replay
+curl -sS "http://localhost:8081/dlq?limit=20&offset=0"
+curl -sS -X POST http://localhost:8081/dlq/<job-id>/replay
 ```
+
+---
+
+## CLI (Minimal but Real)
+
+Run with `go run ./cmd/cli` or build your own `taskforge` binary.
+
+```bash
 taskforge enqueue --job-type email --idempotency-key abc123 --payload '{"to":"a@b.com"}'
 taskforge job get --id 7b5b4f8e-2a7d-4e6f-9d5b-3a6b7f9a0c12
 taskforge dlq list --limit 20
@@ -183,44 +168,50 @@ taskforge dlq replay --id 7b5b4f8e-2a7d-4e6f-9d5b-3a6b7f9a0c12
 
 ---
 
-## Integration Tests
+## Metrics
 
-Run end-to-end tests with Docker:
-```
-bash scripts/integration-test.sh
-```
+Exposed at `GET /metrics` (Prometheus format).
 
-This single command is used both locally and in CI. It brings up `postgres`, `redis`, `api`, and `worker` via `docker-compose.integration.yml`, then runs integration tests.
+Stable metric names:
+- `taskforge_queue_depth{queue}` gauge
+- `taskforge_leased_count{queue}` gauge
+- `taskforge_dlq_count` gauge
+- `taskforge_job_runtime_seconds{queue}` histogram
+- `taskforge_job_success_total{queue}` counter
+- `taskforge_job_failure_total{queue}` counter
+- `taskforge_lease_timeouts_total{queue}` counter
+- `taskforge_worker_utilization{queue}` gauge
+- `taskforge_worker_concurrency_throttled_total{queue}` counter
+- `taskforge_worker_rate_throttled_total{queue}` counter
 
-Current integration coverage includes:
-- enqueue -> execute -> succeed
-- enqueue failing -> retry scheduling -> DLQ -> replay
+Stable labels:
+- `queue`: queue name for queue/worker/job metrics.
+- `taskforge_dlq_count` is global (no labels).
 
 ---
 
-## Architecture Overview
+## Integration Tests (Local + CI)
 
-### API Service
-- Accepts job submissions via REST endpoints
-- Provides job status querying and cancellation
-- Persists job metadata and state transitions in PostgreSQL
-- Publishes jobs to Redis queues for execution
+Single command:
+```bash
+bash scripts/integration-test.sh
+```
 
-### Scheduler
-- Computes `next_run_at` for retries
-- Enforces retry policies and transitions jobs
-- Handles visibility timeouts and re-queues expired leases
+What it does:
+- Starts `postgres`, `redis`, `api`, `worker` using `docker-compose.integration.yml`.
+- Runs `go test -tags=integration ./internal/integration -count=1`.
+- Tears down containers automatically.
 
-### Worker Pool
-- Stateless workers with configurable concurrency and rate limiting
-- Lease-based execution with heartbeats
-- Emits metrics for throttling and utilization
+Covered flow:
+- enqueue -> execute -> succeed
+- enqueue failing -> retries -> dlq -> replay
 
-### Persistent Store (PostgreSQL)
-- Stores job metadata and lifecycle state machine
-- Tracks attempts, retry policy, and timing
-- Stores DLQ entries with failure reasons
+---
 
-### Redis Layer
-- Primary job queues
-- Queue depth for metrics
+## Architecture
+
+- API service: submission, inspection, retry/DLQ/cancel endpoints.
+- Scheduler: deterministic retry scheduling + due-retry enqueue.
+- Worker: atomic leasing, heartbeat renewal, execution, success/failure transitions.
+- Postgres: jobs, dead_letters, job_events.
+- Redis: ready queue transport and queue-depth signal.
