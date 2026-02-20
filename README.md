@@ -201,6 +201,8 @@ What it does:
 - Starts `postgres`, `redis`, `api`, `worker` using `docker-compose.integration.yml`.
 - Runs `go test -tags=integration ./internal/integration -count=1`.
 - Tears down containers automatically.
+- Supports optional focused runs via `INTEGRATION_TEST_PATTERN`, e.g.:
+  - `INTEGRATION_TEST_PATTERN=TestIntegrationSuccessThenRetryDlqReplay bash scripts/integration-test.sh`
 
 Covered flow:
 - enqueue -> execute -> succeed
