@@ -8,7 +8,11 @@ export POSTGRES_DSN="${POSTGRES_DSN:-postgres://taskforge:taskforge@localhost:54
 export REDIS_ADDR="${REDIS_ADDR:-localhost:6379}"
 export QUEUE_NAME="${QUEUE_NAME:-jobs:ready}"
 
-docker compose -f "$COMPOSE_FILE" up -d
+if docker compose -f "$COMPOSE_FILE" up --help | grep -q -- "--wait"; then
+  docker compose -f "$COMPOSE_FILE" up -d --wait --wait-timeout 120
+else
+  docker compose -f "$COMPOSE_FILE" up -d
+fi
 
 cleanup() {
   docker compose -f "$COMPOSE_FILE" down -v
@@ -24,4 +28,9 @@ for i in {1..40}; do
   sleep 2
 done
 
-go test -tags=integration ./internal/integration -count=1
+TEST_PATTERN="${INTEGRATION_TEST_PATTERN:-}"
+if [[ -n "$TEST_PATTERN" ]]; then
+  go test -tags=integration ./internal/integration -count=1 -run "$TEST_PATTERN"
+else
+  go test -tags=integration ./internal/integration -count=1
+fi
