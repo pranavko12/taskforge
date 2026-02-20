@@ -52,8 +52,16 @@ func main() {
 		})
 	}
 
-	if err := loop.Run(ctx, execute); err != nil {
-		slog.Error("worker loop stopped with error", "err", err)
-		os.Exit(1)
+	for {
+		if err := loop.Run(ctx, execute); err != nil {
+			slog.Error("worker loop error", "err", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(1 * time.Second):
+				continue
+			}
+		}
+		return
 	}
 }
