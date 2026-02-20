@@ -131,8 +131,7 @@ func IncLeaseTimeouts(queue string) {
 
 type QueueDLQProvider interface {
 	QueueDepth(ctx context.Context) (int64, error)
-	DLQCount(ctx context.Context) (int, error)
-	LeasedCount(ctx context.Context) (int, error)
+	QueueStateCounts(ctx context.Context) (dlq int, leased int, err error)
 }
 
 type QueueDLQCollector struct {
@@ -179,10 +178,8 @@ func (c *QueueDLQCollector) Collect(ch chan<- prometheus.Metric) {
 	if depth, err := c.provider.QueueDepth(ctx); err == nil {
 		ch <- prometheus.MustNewConstMetric(c.depthDesc, prometheus.GaugeValue, float64(depth), c.queueName)
 	}
-	if count, err := c.provider.DLQCount(ctx); err == nil {
-		ch <- prometheus.MustNewConstMetric(c.dlqDesc, prometheus.GaugeValue, float64(count))
-	}
-	if count, err := c.provider.LeasedCount(ctx); err == nil {
-		ch <- prometheus.MustNewConstMetric(c.leasedDesc, prometheus.GaugeValue, float64(count), c.queueName)
+	if dlq, leased, err := c.provider.QueueStateCounts(ctx); err == nil {
+		ch <- prometheus.MustNewConstMetric(c.dlqDesc, prometheus.GaugeValue, float64(dlq))
+		ch <- prometheus.MustNewConstMetric(c.leasedDesc, prometheus.GaugeValue, float64(leased), c.queueName)
 	}
 }

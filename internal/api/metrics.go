@@ -34,18 +34,10 @@ func (p queueDLQProvider) QueueDepth(ctx context.Context) (int64, error) {
 	return p.queue.QueueDepth(ctx, p.queueName)
 }
 
-func (p queueDLQProvider) DLQCount(ctx context.Context) (int, error) {
+func (p queueDLQProvider) QueueStateCounts(ctx context.Context) (int, int, error) {
 	stats, err := p.store.Stats(ctx)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return stats.DLQ, nil
-}
-
-func (p queueDLQProvider) LeasedCount(ctx context.Context) (int, error) {
-	stats, err := p.store.Stats(ctx)
-	if err != nil {
-		return 0, err
-	}
-	return stats.Leased, nil
+	return stats.DLQ, stats.Leased, nil
 }
